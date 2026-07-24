@@ -132,12 +132,24 @@ actor LLMClient {
         return text
     }
 
+    /// Retry transient failures (network error, timeout, 5xx) up to 3 attempts with backoff. 4xx and
+    /// success return immediately (no point retrying a bad request / auth error).
     private func send(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let data: Data, resp: URLResponse
-        do { (data, resp) = try await URLSession.shared.data(for: req) }
-        catch { throw LLMError.network(error.localizedDescription) }
-        guard let http = resp as? HTTPURLResponse else { throw LLMError.emptyResponse }
-        return (data, http)
+        var lastError: Error = LLMError.emptyResponse
+        for attempt in 0..<3 {
+            if attempt > 0 { try? await Task.sleep(nanoseconds: UInt64(attempt) * 400_000_000) }
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                guard let http = resp as? HTTPURLResponse else { throw LLMError.emptyResponse }
+                if (500...599).contains(http.statusCode), attempt < 2 {
+                    lastError = LLMError.http(http.statusCode, String(data: data, encoding: .utf8)); continue
+                }
+                return (data, http)
+            } catch {
+                lastError = LLMError.network(error.localizedDescription)
+            }
+        }
+        throw lastError
     }
 
     /// A tiny round-trip used by Settings → «Проверить соединение».

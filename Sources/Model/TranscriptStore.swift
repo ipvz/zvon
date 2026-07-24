@@ -212,7 +212,7 @@ final class TranscriptStore: ObservableObject {
             finals.sort { $0.startSec < $1.startSec }
             rebuildLines()
             scheduleNotes()
-            detectVoiceTask(corrected)
+            if speaker == .me { detectVoiceTask(corrected) }   // only YOUR speech makes tasks — not the other party's
         case .ended:
             partials[speaker] = nil
             rebuildLines()
