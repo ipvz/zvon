@@ -347,16 +347,39 @@ struct DictView: View {
 
 // MARK: - All records
 
+enum RecordFilter: String, CaseIterable, Identifiable {
+    case all, meeting, dict
+    var id: String { rawValue }
+    var title: String { self == .all ? "Все" : self == .meeting ? "Встречи" : "Диктовки" }
+    func matches(_ s: SessionRecord) -> Bool {
+        switch self { case .all: return true; case .meeting: return s.kind == .meeting; case .dict: return s.kind == .dictation }
+    }
+}
+
 struct AllView: View {
     @ObservedObject var store: TranscriptStore
     @ObservedObject var sessions = SessionStore.shared
     var onOpen: (UUID) -> Void
+    @State private var filter: RecordFilter = .all
+
     var body: some View {
-        libraryColumn {
-            if sessions.sessions.isEmpty && !store.isRecording {
-                Text("Пока нет записей.").font(PFont.secondary).foregroundStyle(Color.pInk3)
+        let all = sessions.sessions
+        let shown = all.filter { filter.matches($0) }
+        let counts: [RecordFilter: Int] = [
+            .all: all.count,
+            .meeting: all.filter { $0.kind == .meeting }.count,
+            .dict: all.filter { $0.kind == .dictation }.count,
+        ]
+        return libraryColumn {
+            if all.count > 1 || filter != .all {
+                RecordFilterBar(filter: $filter, counts: counts).padding(.bottom, 20)
             }
-            ForEach(groupByDay(sessions.sessions, { $0.date }), id: \.0) { day, items in
+            if shown.isEmpty {
+                Text(all.isEmpty && !store.isRecording ? "Пока нет записей."
+                     : filter == .meeting ? "Встреч пока нет." : filter == .dict ? "Диктовок пока нет." : "Пока нет записей.")
+                    .font(PFont.secondary).foregroundStyle(Color.pInk3).padding(.vertical, 8)
+            }
+            ForEach(groupByDay(shown, { $0.date }), id: \.0) { day, items in
                 SectionLabel(text: day).padding(.bottom, 4)
                 ForEach(items) { s in
                     Button { if s.kind == .meeting { onOpen(s.id) } } label: { row(s) }.buttonStyle(.plain)
@@ -382,6 +405,51 @@ struct AllView: View {
         .padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .overlay(alignment: .bottom) { Rectangle().fill(Color.pLine2).frame(height: 1) }
+    }
+}
+
+/// Premium segmented filter — a raised pill slides under the active segment; each shows its count.
+struct RecordFilterBar: View {
+    @Binding var filter: RecordFilter
+    let counts: [RecordFilter: Int]
+    @Namespace private var ns
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(RecordFilter.allCases) { f in
+                let active = filter == f
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) { filter = f }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(f.title).font(.system(size: 13, weight: active ? .semibold : .regular))
+                            .foregroundStyle(active ? Color.pInk1 : Color.pInk2)
+                        if let c = counts[f], c > 0 {
+                            Text("\(c)").font(.system(size: 11, weight: .medium)).monospacedDigit()
+                                .foregroundStyle(active ? Color.pAccent : Color.pInk3)
+                        }
+                    }
+                    .padding(.horizontal, 14).frame(height: 30)
+                    .background {
+                        if active {
+                            RoundedRectangle(cornerRadius: 8).fill(Color.pCard)
+                                .shadow(color: .black.opacity(0.14), radius: 3, x: 0, y: 1)
+                                .matchedGeometryEffect(id: "seg", in: ns)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(f.title)
+                .accessibilityAddTraits(active ? [.isSelected] : [])
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(4)
+        .background(Color.pField)
+        .clipShape(RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Color.pLine, lineWidth: 1))
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

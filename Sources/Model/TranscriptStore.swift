@@ -324,6 +324,10 @@ final class TranscriptStore: ObservableObject {
     }
 
     /// Debounced live-notes generation from the finalized transcript.
+    private var lastNotesAt: Date?
+    private var lastNotesFinals = 0
+    private static let notesMinInterval: TimeInterval = 45   // don't refresh the live итог more often than this
+
     private func scheduleNotes() {
         guard summariesEnabled else { return }  // «Саммари и Итог» off → no live notes
         guard !dictating else { return }        // dictation isn't a meeting — no notes
@@ -331,10 +335,17 @@ final class TranscriptStore: ObservableObject {
         noteDebounce?.cancel()
         let transcript = transcriptText()
         let cfg = llmConfig()
+        let finalsNow = finals.count
         noteDebounce = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_500_000_000)
+            try? await Task.sleep(nanoseconds: 7_000_000_000)   // wait for a real pause (7s quiet)
             if Task.isCancelled { return }
-            await self?.runNotes(transcript: transcript, cfg: cfg)
+            guard let self else { return }
+            // Throttle: at most once per ~45s — unless a lot of new content accrued (≥20 finals),
+            // so long silent stretches don't waste calls and the итог doesn't churn every pause.
+            let elapsed = self.lastNotesAt.map { Date().timeIntervalSince($0) } ?? .infinity
+            let newFinals = finalsNow - self.lastNotesFinals
+            guard elapsed >= Self.notesMinInterval || newFinals >= 20 else { return }
+            await self.runNotes(transcript: transcript, cfg: cfg)
         }
     }
 
@@ -349,6 +360,8 @@ final class TranscriptStore: ObservableObject {
 
     private func runNotes(transcript: String, cfg: LLMConfig) async {
         guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }   // no endpoint → nothing leaves the device
+        lastNotesAt = Date()               // reset the auto-refresh throttle (covers manual ✦ Итог too)
+        lastNotesFinals = finals.count
         notesGenerating = true
         defer { notesGenerating = false }
         do {
