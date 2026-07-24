@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 /// The app shell: sidebar (history) + main pane (transcript · footer · status bar). Single column,
 /// no right rail (spec §1). Traffic lights float over the sidebar's top row.
@@ -13,6 +14,8 @@ struct MeetingView: View {
     @State private var selectedId: UUID?
     @State private var mainView: MainView = .meeting
     @State private var showingSettings = false
+    @State private var showShare = false
+    @State private var shareCopied = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -260,7 +263,8 @@ struct MeetingView: View {
                     .disabled(!store.canRecord)
             }
             if mainView == .meeting {
-                toolbarButton(danger: false, label: "Поделиться") { shareTranscript() }
+                toolbarButton(danger: false, label: "Поделиться") { showShare = true }
+                    .popover(isPresented: $showShare, arrowEdge: .bottom) { sharePopover }
             }
         }
         .padding(.horizontal, 20).frame(height: 56)
@@ -463,9 +467,9 @@ struct MeetingView: View {
             let blocks = parseTranscript(s.transcript ?? s.title)
             VStack(alignment: .leading, spacing: 20) {
                 participantsRow(Set(blocks.map(\.0).filter { !$0.isEmpty }))
-                if let bullets = s.noteSummary, !bullets.isEmpty {
-                    summaryCardBullets("✦ Итог", bullets)
-                }
+                let pastNotes = MeetingNotes(summary: s.noteSummary ?? [], decisions: s.noteDecisions ?? [],
+                                             actions: [], topics: s.noteTopics ?? [])
+                if !pastNotes.isEmpty { summaryCard(pastNotes) }   // full card: Итог + Решения + Темы
                 meetingTasks(s.id)
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -607,18 +611,93 @@ struct MeetingView: View {
         }
     }
 
-    private func shareTranscript() {
-        var text: String
-        if viewingPast, let s = selected {
-            let head = (s.noteSummary ?? []).map { "• \($0)" }.joined(separator: "\n")
-            text = [head, s.transcript ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        } else {
-            let head = store.notes.summary.map { "• \($0)" }.joined(separator: "\n")
-            let body = store.lines.map { "\($0.speaker.title): \($0.text)" }.joined(separator: "\n")
-            text = [head, body].filter { !$0.isEmpty }.joined(separator: "\n\n")
+    // MARK: - Export / share
+
+    private var sharePopover: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ShareMenuRow(title: shareCopied ? "Скопировано ✓" : "Копировать текст",
+                         icon: shareCopied ? "checkmark" : "doc.on.doc", tint: shareCopied) { copyShare() }
+            ShareMenuRow(title: "Сохранить PDF…", icon: "arrow.down.doc") { savePDF() }
+            ShareMenuRow(title: "Поделиться…", icon: "square.and.arrow.up") { systemShare() }
         }
-        guard !text.isEmpty else { return }
-        let pb = NSPasteboard.general; pb.clearContents(); pb.setString(text, forType: .string)
+        .padding(6).frame(width: 226)
+    }
+
+    private func currentExport() -> MeetingExport {
+        if viewingPast, let s = selected {
+            let turns: [MeetingExport.Turn] = (s.transcript ?? "")
+                .split(separator: "\n", omittingEmptySubsequences: true).map { line in
+                    if let c = line.firstIndex(of: ":") {
+                        return .init(role: String(line[..<c]).trimmingCharacters(in: .whitespaces),
+                                     text: String(line[line.index(after: c)...]).trimmingCharacters(in: .whitespaces))
+                    }
+                    return .init(role: "", text: String(line))
+                }
+            let tasks = taskStore.forSession(s.id).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
+            return MeetingExport(title: s.title, date: s.date, durationSec: s.durationSec, participants: [],
+                                 summary: s.noteSummary ?? [], decisions: s.noteDecisions ?? [],
+                                 tasks: tasks, transcript: turns, includeTranscript: false)
+        }
+        let parts = Array(Set(store.lines.map(\.speaker.title))).sorted()
+        let turns = store.lines.map { MeetingExport.Turn(role: $0.speaker.title, text: $0.text) }
+        let tasks = taskStore.forSession(store.currentSessionId).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
+        return MeetingExport(title: store.notes.topics.first ?? "Встреча",
+                             date: store.recordingStartedAt ?? Date(),
+                             durationSec: store.recordingStartedAt.map { Date().timeIntervalSince($0) },
+                             participants: parts, summary: store.notes.summary, decisions: store.notes.decisions,
+                             tasks: tasks, transcript: turns, includeTranscript: false)
+    }
+
+    private func copyShare() {
+        let pb = NSPasteboard.general; pb.clearContents(); pb.setString(currentExport().shareText(), forType: .string)
+        shareCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { shareCopied = false; showShare = false }
+    }
+
+    private func savePDF() {
+        let export = currentExport()
+        showShare = false
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(export.title).pdf"
+        panel.allowedContentTypes = [.pdf]
+        if panel.runModal() == .OK, let url = panel.url { try? export.pdfData().write(to: url) }
+    }
+
+    private func systemShare() {
+        let export = currentExport()
+        showShare = false
+        var items: [Any] = [export.shareText()]
+        if let pdf = export.pdfTempURL() { items.append(pdf) }
+        guard let view = NSApp.keyWindow?.contentView else { return }
+        DispatchQueue.main.async {
+            let picker = NSSharingServicePicker(items: items)
+            let anchor = NSRect(x: view.bounds.maxX - 220, y: view.bounds.maxY - 56, width: 1, height: 1)
+            picker.show(relativeTo: anchor, of: view, preferredEdge: .minY)
+        }
+    }
+}
+
+/// A row in the share popover with a subtle accent hover highlight.
+private struct ShareMenuRow: View {
+    let title: String
+    let icon: String
+    var tint: Bool = false
+    let action: () -> Void
+    @State private var hovering = false
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 13)).foregroundStyle(tint ? Color.pAccent : Color.pInk2).frame(width: 18)
+                Text(title).font(PFont.secondary).foregroundStyle(tint ? Color.pAccent : Color.pInk1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 7).fill(hovering ? Color.pAccent.opacity(0.12) : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
 

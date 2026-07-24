@@ -640,7 +640,9 @@ final class TranscriptStore: ObservableObject {
             durationSec: duration,
             hasSummary: !notes.isEmpty,
             transcript: transcriptText(),
-            noteSummary: notes.summary.isEmpty ? nil : notes.summary
+            noteSummary: notes.summary.isEmpty ? nil : notes.summary,
+            noteDecisions: notes.decisions.isEmpty ? nil : notes.decisions,
+            noteTopics: notes.topics.isEmpty ? nil : notes.topics
         )
     }
 

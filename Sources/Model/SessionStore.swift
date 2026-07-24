@@ -12,6 +12,8 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var hasSummary: Bool = false
     var transcript: String?
     var noteSummary: [String]?    // cached ✦ Итог bullets, if any
+    var noteDecisions: [String]?  // «Решения» section, persisted so it survives after the meeting
+    var noteTopics: [String]?     // «Темы» tags
 
     /// Sidebar sub-line: "11:20 · 41 мин" for meetings, "Диктовка · 13:05" for snippets.
     var subtitle: String {
@@ -51,9 +53,11 @@ final class SessionStore: ObservableObject {
     // MARK: Add
 
     func addMeeting(id: UUID = UUID(), title: String, date: Date, durationSec: Double, hasSummary: Bool,
-                    transcript: String, noteSummary: [String]?) {
+                    transcript: String, noteSummary: [String]?,
+                    noteDecisions: [String]? = nil, noteTopics: [String]? = nil) {
         insert(SessionRecord(id: id, kind: .meeting, title: title, date: date, durationSec: durationSec,
-                             hasSummary: hasSummary, transcript: transcript, noteSummary: noteSummary))
+                             hasSummary: hasSummary, transcript: transcript, noteSummary: noteSummary,
+                             noteDecisions: noteDecisions, noteTopics: noteTopics))
     }
 
     func addDictation(text: String, date: Date) {
