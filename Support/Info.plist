@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Parley</string>
+	<key>CFBundleDisplayName</key>
+	<string>Parley</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleIconFile</key>
+	<string>Parley</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHumanReadableCopyright</key>
+	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Parley слушает микрофон, чтобы расшифровывать вашу речь в реальном времени.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Parley записывает звук из динамика (собеседников на созвоне), чтобы расшифровывать их речь. Аудио не покидает ваш Mac.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Parley добавляет задачи из встреч в приложение «Напоминания», если вы это выберете.</string>
+	<!-- LLM-заметки ходят на self-hosted эндпоинт по HTTP. ATS иначе блокирует незащищённое
+	     соединение (curl не проверяет ATS — потому там работало, а в приложении нет). -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<!-- Ф0: обычное окно + иконка в доке для удобства теста.
+	     Для чистого menu-bar-режима позже: LSUIElement = true. -->
+	<key>LSUIElement</key>
+	<false/>
+</dict>
+</plist>

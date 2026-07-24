@@ -1,0 +1,246 @@
+import Foundation
+
+/// VAD-segmented real-time transcription (Wispr Flow / WhisperLiveKit style), with the VAD loop
+/// DECOUPLED from decoding. Emits `TranscriptionEvent`s for ONE audio stream; the pipeline tags
+/// each stream with a `Speaker` (mic = me, system = them).
+///
+/// - A fast VAD loop (~12 Hz) tracks speech/silence with an adaptive, gain-robust energy
+///   threshold and never calls the model, so it can't be blinded while decoding.
+/// - A single serial worker decodes captured utterance slices in order: `.final` (a complete
+///   utterance on a pause) and `.interim` (a best-effort preview of the current utterance).
+/// - Empty output and canonical silence hallucinations are dropped.
+actor UtteranceTranscriber {
+    struct Config {
+        var tick: Double = 0.08
+        var endpointSilence: Float = 0.5
+        var minUtterance: Float = 0.35
+        var maxUtterance: Float = 18
+        var preRoll: Float = 0.30   // rewind before onset so the word's attack + lead-in context is kept
+                                    // (helps both first-word clipping and the model's accuracy on it)
+        var showInterim: Bool = true
+        var interimEvery: Double = 0.6
+        var interimMinLen: Float = 0.5
+
+        /// Push-to-talk dictation: the key-release ends the utterance, so allow long thinking-pauses
+        /// (≈1.6s) before auto-endpointing — a mid-sentence pause must not split the phrase.
+        static let dictation = Config(endpointSilence: 1.6, maxUtterance: 45)
+    }
+
+    private enum Job { case interim([Float]); case final([Float], Double) }
+
+    private let decodeFn: @Sendable ([Float]) async -> String
+    private let source: LiveAudioSource
+    private let onEvent: @Sendable (TranscriptionEvent) -> Void
+    private let cfg: Config
+    private let sr: Float = 16000
+
+    private var running = false
+    private var windowStartSample = 0
+    private var utteranceStartAbs = 0
+    private var inSpeech = false
+    private var speechRun = 0          // consecutive speech ticks — confirms an onset (anti-spike)
+    private var silenceRun: Float = 0
+    private var noiseFloor: Float = 0.0010
+    private var peakRMS: Float = 0.02
+    private var utterancePeakRMS: Float = 0
+    private var vadTick = 0
+    private var lastInterimWall: Double = 0
+    private var interimInFlight = false
+    private var jobCont: AsyncStream<Job>.Continuation?
+
+    private static let hallucinations = [
+        "продолжение следует", "спасибо за просмотр", "спасибо за внимание",
+        "субтитры", "редактор субтитров", "субтитры создавал", "субтитры делал",
+        "субтитры сделал", "субтитры добавил", "корректор",
+        "добро пожаловать", "подписывайтесь", "ставьте лайк", "не забудьте подписаться",
+        "всем пока", "звучит музыка", "музыка играет", "аплодисменты",
+        "thanks for watching", "thank you for watching", "please subscribe", "subtitles by",
+    ]
+
+    init(
+        decode: @escaping @Sendable ([Float]) async -> String,
+        source: LiveAudioSource,
+        config: Config = Config(),
+        onEvent: @escaping @Sendable (TranscriptionEvent) -> Void
+    ) {
+        self.decodeFn = decode
+        self.source = source
+        self.cfg = config
+        self.onEvent = onEvent
+    }
+
+    func stop() { running = false }
+
+    func run() async throws {
+        try source.start()
+        running = true
+        DebugLog.log("utterance loop start")
+
+        let (stream, cont) = AsyncStream<Job>.makeStream()
+        jobCont = cont
+        let worker = Task { [weak self] in
+            for await job in stream { await self?.process(job) }
+        }
+
+        var lastWall = monotonicSeconds()
+        while running {
+            try? await Task.sleep(nanoseconds: 40_000_000)
+            if !running { break }
+            let now = monotonicSeconds()
+            let dt = Float(now - lastWall)
+            guard dt >= Float(cfg.tick) else { continue }
+            lastWall = now
+
+            let samples = source.snapshotSamples()
+            let energy = source.snapshotEnergy()
+            let nowAbs = windowStartSample + samples.count
+            guard samples.count > Int(0.2 * sr) else { onEvent(.meter(energy)); continue }
+
+            let rms = Self.rms(of: samples, lastSeconds: 0.18, sr: sr)
+            peakRMS = max(peakRMS * powf(0.5, dt), rms)
+            let threshold = max(0.0026, noiseFloor + (peakRMS - noiseFloor) * 0.16)
+            let speech = rms > threshold
+            vadTick += 1
+            if vadTick % 6 == 0 {
+                DebugLog.log("vad dt=\(String(format: "%.2f", dt)) rms=\(String(format: "%.4f", rms)) thr=\(String(format: "%.4f", threshold)) speech=\(speech) sil=\(String(format: "%.2f", silenceRun))")
+            }
+
+            if speech {
+                speechRun += 1
+                // Confirm the onset over ≥2 ticks so a single spike / click / keystroke can't
+                // start a false utterance. preRoll below rewinds to include the confirming ticks.
+                if !inSpeech, speechRun >= 2 {
+                    inSpeech = true
+                    let backTicks = cfg.preRoll + Float(speechRun) * Float(cfg.tick)
+                    utteranceStartAbs = max(utteranceStartAbs, nowAbs - Int(backTicks * sr))
+                    utterancePeakRMS = 0
+                }
+                if inSpeech {
+                    silenceRun = 0
+                    utterancePeakRMS = max(utterancePeakRMS, rms)
+
+                    let uttLen = Float(nowAbs - utteranceStartAbs) / sr
+                    if cfg.showInterim, uttLen >= cfg.interimMinLen, !interimInFlight, now - lastInterimWall >= cfg.interimEvery {
+                        if let slice = sliceOf(from: utteranceStartAbs, to: nowAbs, window: samples) {
+                            interimInFlight = true
+                            lastInterimWall = now
+                            jobCont?.yield(.interim(slice))
+                        }
+                    }
+                    if uttLen >= cfg.maxUtterance { endpoint(endAbs: nowAbs, window: samples) }
+                }
+            } else {
+                speechRun = 0
+                noiseFloor = max(0.0002, noiseFloor + (rms - noiseFloor) * min(1, dt * 0.5))
+                silenceRun += dt
+                if inSpeech && silenceRun >= cfg.endpointSilence {
+                    endpoint(endAbs: nowAbs - Int(silenceRun * sr), window: samples)
+                } else if !inSpeech {
+                    // Nobody speaking (endpoint() only purges while inSpeech): roll the buffer so a
+                    // quiet room / listening-only participant can't grow the window unbounded.
+                    let windowSec = Float(nowAbs - windowStartSample) / sr
+                    if windowSec > cfg.preRoll + 2.0 {
+                        let keep = Int((cfg.preRoll + 1.0) * sr)
+                        if keep < samples.count {
+                            source.purge(keepingLast: keep)
+                            windowStartSample = nowAbs - keep
+                            utteranceStartAbs = max(utteranceStartAbs, windowStartSample)
+                        }
+                    }
+                }
+            }
+            onEvent(.meter(energy))
+        }
+
+        let tail = source.snapshotSamples()
+        if inSpeech { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
+        jobCont?.finish()
+        await worker.value
+        source.stop()
+        onEvent(.ended)
+        DebugLog.log("utterance loop end")
+    }
+
+    // MARK: - Endpoint (energy-gated) → job
+
+    private func endpoint(endAbs: Int, window samples: [Float]) {
+        let start = utteranceStartAbs
+        let peak = utterancePeakRMS
+        inSpeech = false
+        silenceRun = 0
+        utterancePeakRMS = 0
+        utteranceStartAbs = max(utteranceStartAbs, endAbs)
+
+        let lenSec = Float(endAbs - start) / sr
+        let energyOK = peak > max(0.0045, noiseFloor * 2.0)
+        if lenSec >= cfg.minUtterance, energyOK,
+           let slice = sliceOf(from: start, to: endAbs, window: samples) {
+            jobCont?.yield(.final(slice, Double(start) / Double(sr)))
+        }
+        purgeProcessedAudio(currentWindowCount: samples.count)
+    }
+
+    // MARK: - Serial decode worker
+
+    private func process(_ job: Job) async {
+        switch job {
+        case .interim(let slice):
+            let text = await decode(slice)
+            interimInFlight = false
+            if inSpeech, !text.isEmpty { onEvent(.interim(text)) }
+        case .final(let slice, let startSec):
+            let text = await decode(slice)
+            if !text.isEmpty {
+                DebugLog.log("final +\(text.count) @\(String(format: "%.1f", startSec))s")
+                onEvent(.final(text: text, startSec: startSec))
+            } else {
+                onEvent(.interim(""))   // clear a stale preview if the final was rejected
+            }
+        }
+    }
+
+    private func decode(_ slice: [Float]) async -> String {
+        Self.clean(await decodeFn(slice))
+    }
+
+    private static func clean(_ raw: String) -> String {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "" }
+        // No letters/digits at all → pure punctuation artifact ("…", ".", "-") → drop.
+        guard text.rangeOfCharacter(from: .alphanumerics) != nil else { return "" }
+        let low = text.lowercased()
+        for phrase in hallucinations where low == phrase || low.contains(phrase) { return "" }
+        return text
+    }
+
+    // MARK: - Helpers
+
+    private func sliceOf(from: Int, to: Int, window samples: [Float]) -> [Float]? {
+        let lo = max(0, from - windowStartSample)
+        let hi = min(samples.count, to - windowStartSample)
+        guard hi - lo > Int(0.2 * sr) else { return nil }
+        return Array(samples[lo..<hi])
+    }
+
+    private func purgeProcessedAudio(currentWindowCount: Int) {
+        let keepFrom = max(windowStartSample, utteranceStartAbs - Int(0.3 * sr))
+        guard keepFrom > windowStartSample else { return }
+        let total = windowStartSample + currentWindowCount
+        let keepCount = total - keepFrom
+        guard keepCount > 0, keepCount < currentWindowCount else { return }
+        source.purge(keepingLast: keepCount)
+        windowStartSample = keepFrom
+    }
+
+    private static func rms(of samples: [Float], lastSeconds: Float, sr: Float) -> Float {
+        let n = min(samples.count, Int(lastSeconds * sr))
+        guard n > 0 else { return 0 }
+        var sum: Float = 0
+        for x in samples.suffix(n) { sum += x * x }
+        return (sum / Float(n)).squareRoot()
+    }
+
+    private func monotonicSeconds() -> Double {
+        Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000_000
+    }
+}
