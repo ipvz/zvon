@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 840 340" width="840" height="340" font-family="-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif">
+  <rect x="0" y="0" width="840" height="340" rx="14" fill="#FBFAF8"/>
+  <rect x="0.5" y="0.5" width="839" height="339" rx="13.5" fill="none" stroke="#DEE2E2"/>
+
+  <!-- row 1 -->
+  <g transform="translate(24,26)">
+    <g><rect width="176" height="58" rx="9" fill="#009798"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Тил</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#009798</text><text x="0" y="115" font-size="12" fill="#5E6565">акцент · плитка · кнопки</text></g>
+    <g transform="translate(200,0)"><rect width="176" height="58" rx="9" fill="#0E1615"/><rect width="176" height="58" rx="9" fill="none" stroke="#DEE2E2"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Тил · на тёмном</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#00C4C4</text><text x="0" y="115" font-size="12" fill="#5E6565">на #0E1615 · 8,5 : 1</text><rect x="14" y="16" width="90" height="26" rx="5" fill="none"/><text x="20" y="42" font-size="18" font-weight="600" fill="#00C4C4">ZVON</text></g>
+    <g transform="translate(400,0)"><rect width="176" height="58" rx="9" fill="#007D7E"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Тил · для текста</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#007D7E</text><text x="0" y="115" font-size="12" fill="#5E6565">ссылки · подписи · 4,75 : 1</text></g>
+    <g transform="translate(600,0)"><rect width="176" height="58" rx="9" fill="#DE3E2D"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Запись</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#DE3E2D</text><text x="0" y="115" font-size="12" fill="#5E6565">только статус записи</text></g>
+  </g>
+
+  <!-- row 2 -->
+  <g transform="translate(24,190)">
+    <g><rect width="176" height="58" rx="9" fill="#0C0C0C"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Чернила</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#0C0C0C</text><text x="0" y="115" font-size="12" fill="#5E6565">знак · заголовки</text></g>
+    <g transform="translate(200,0)"><rect width="176" height="58" rx="9" fill="#5E6565"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Графит</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#5E6565</text><text x="0" y="115" font-size="12" fill="#5E6565">вторичный текст · 5,7 : 1</text></g>
+    <g transform="translate(400,0)"><rect width="176" height="58" rx="9" fill="#FBFAF8"/><rect width="176" height="58" rx="9" fill="none" stroke="#DEE2E2"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Бумага</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#FBFAF8</text><text x="0" y="115" font-size="12" fill="#5E6565">основной фон</text></g>
+    <g transform="translate(600,0)"><rect width="176" height="58" rx="9" fill="#DEE2E2"/><text x="0" y="80" font-size="14" font-weight="500" fill="#0C0C0C">Линия</text><text x="0" y="98" font-size="12.5" fill="#5E6565" font-family="ui-monospace,Menlo,monospace">#DEE2E2</text><text x="0" y="115" font-size="12" fill="#5E6565">границы · разделители</text></g>
+  </g>
+</svg>

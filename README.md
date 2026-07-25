@@ -103,6 +103,10 @@ xcodebuild -project Parley.xcodeproj -scheme Parley \
 
 **Версия `0.1.0`, фаза 0** — прямая раздача, без App Sandbox. Ещё не сделано: ребренд `Parley → ZVON` не доведён (проект/схема/bundle/серт всё ещё `Parley`; `scripts/package-dmg.sh` хардкодит `Parley.app`); метки времени у тезисов Итога не реализованы; легаси-код одно-панельной вёрстки остаётся в `MeetingView`; тест-таргета нет; ATS открыт процессно. История имён — `Parley → Granula → ZVON` — видна в артефактах билдов; текущему `project.yml` соответствует только `ZVON.app`.
 
+### ✦ Бренд
+
+Знак, иконка, цвет, шрифт и все SVG-ассеты — в [**брендбуке**](docs/BRANDBOOK.md).
+
 </details>
 
 <!-- ======================= ENGLISH ======================= -->
@@ -205,5 +209,9 @@ Signing uses a stable self-signed `Parley Dev Cert` so TCC grants aren’t re-pr
 ### ✦ Status & roadmap
 
 **Version `0.1.0`, phase 0** — direct distribution, no App Sandbox. Not done yet: the `Parley → ZVON` rebrand isn’t finished (project/scheme/bundle/cert are still `Parley`; `scripts/package-dmg.sh` hardcodes `Parley.app`); per-thesis timestamps in the Summary aren’t implemented; legacy single-column code lingers in `MeetingView`; no test target; ATS is open process-wide. The naming history — `Parley → Granula → ZVON` — is visible in the build artifacts; only `ZVON.app` matches the current `project.yml`.
+
+### ✦ Brand
+
+Logo, icon, color, type and all SVG assets — in the [**brand book**](docs/BRANDBOOK.md).
 
 </details>
