@@ -1,37 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" width="1200" height="640" font-family="-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif">
   <defs>
     <clipPath id="win"><rect x="0" y="0" width="1200" height="640" rx="14"/></clipPath>
+    <clipPath id="clipSide"><rect x="0" y="0" width="238" height="640"/></clipPath>
+    <clipPath id="clipList"><rect x="238" y="0" width="308" height="640"/></clipPath>
+    <clipPath id="clipDetail"><rect x="546" y="0" width="654" height="640"/></clipPath>
   </defs>
 
   <g clip-path="url(#win)">
     <rect x="0" y="0" width="1200" height="640" fill="#0E1615"/>
-    <!-- column fills -->
     <rect x="0" y="0" width="238" height="640" fill="#0A1110"/>
     <line x1="238" y1="0" x2="238" y2="640" stroke="#1B2524"/>
     <line x1="546" y1="0" x2="546" y2="640" stroke="#1B2524"/>
 
     <!-- ============ SIDEBAR ============ -->
+    <g clip-path="url(#clipSide)">
     <circle cx="18" cy="22" r="6" fill="#FF5F57"/><circle cx="38" cy="22" r="6" fill="#FEBC2E"/><circle cx="58" cy="22" r="6" fill="#28C840"/>
 
-    <!-- brand: wave + ZVON -->
     <g transform="translate(59,61) scale(0.0363)" fill="#00C4C4">
       <path d="M36.384 162.343L79.59 162.343A30.995 27.26 0 0 0 107.376 147.162L161.448 50.95A103.763 91.26 0 0 1 352.975 62.714L435.869 282.997A30.995 27.26 0 0 0 493.851 285.028L559.786 147.575A36.384 32 0 0 1 626.832 172.453L560.896 309.906A103.763 91.26 0 0 1 366.786 303.106L283.892 82.823A30.995 27.26 0 0 0 226.682 79.309L172.61 175.522A103.763 91.26 0 0 1 79.59 226.343L36.384 226.343A36.384 32 0 0 1 36.384 162.343Z"></path>
       <path d="M604.86 53.705A103.763 91.26 0 0 1 794.453 55.142L908.231 285.335A30.995 27.26 0 0 0 963.746 287.714L1027.726 186.502A103.763 91.26 0 0 1 1118.415 139.587L1229.841 139.587A36.384 32 0 0 1 1229.841 203.587L1118.415 203.587A30.995 27.26 0 0 0 1091.325 217.601L1027.345 318.813A103.763 91.26 0 0 1 841.496 310.851L727.718 80.657A30.995 27.26 0 0 0 671.085 80.228A36.384 32 0 0 1 604.86 53.705Z"></path>
     </g>
     <text x="116" y="83" font-size="23" font-weight="600" letter-spacing="-0.3"><tspan fill="#00C4C4">ZV</tspan><tspan fill="#F2F5F4">ON</tspan></text>
 
-    <!-- start button -->
     <rect x="12" y="104" width="214" height="36" rx="8" fill="#00C4C4"/>
     <text x="26" y="127" font-size="13.5" font-weight="600" fill="#04201F">Начать запись</text>
     <text x="214" y="127" text-anchor="end" font-size="11.5" fill="#04201F" fill-opacity="0.65" font-family="ui-monospace,Menlo,monospace">⌘⇧R</text>
 
-    <!-- search -->
     <rect x="12" y="150" width="214" height="32" rx="8" fill="#141D1C" stroke="#1F2A29"/>
     <circle cx="28" cy="166" r="6.5" fill="none" stroke="#6C7A78" stroke-width="1.5"/>
     <text x="42" y="170" font-size="12.5" fill="#7D8B89">Поиск и вопросы</text>
     <text x="214" y="170" text-anchor="end" font-size="11" fill="#5B6866" font-family="ui-monospace,Menlo,monospace">⌘K</text>
 
-    <!-- nav -->
     <rect x="12" y="200" width="214" height="32" rx="7" fill="#00C4C4" fill-opacity="0.14"/>
     <rect x="23" y="210.5" width="15" height="11" rx="2" fill="none" stroke="#00C4C4" stroke-width="1.5"/>
     <text x="47" y="220" font-size="13.5" font-weight="500" fill="#4FE0E0">Записи</text>
@@ -47,7 +46,6 @@
     <text x="47" y="294" font-size="13.5" fill="#C3CECC">Словарь</text>
     <text x="214" y="294" text-anchor="end" font-size="12" fill="#6C7A78">3</text>
 
-    <!-- privacy plate + settings -->
     <rect x="12" y="536" width="214" height="46" rx="8" fill="#111A19" stroke="#1C2726"/>
     <circle cx="26" cy="552" r="3.5" fill="#00C4C4"/>
     <text x="38" y="553" font-size="11.5" fill="#8B9A97">Распознавание локально</text>
@@ -55,8 +53,10 @@
     <rect x="24" y="600" width="13" height="13" rx="6.5" fill="none" stroke="#7D8B89" stroke-width="1.5"/>
     <text x="47" y="611" font-size="13" fill="#A9B6B4">Настройки</text>
     <text x="214" y="611" text-anchor="end" font-size="11" fill="#5B6866" font-family="ui-monospace,Menlo,monospace">⌘,</text>
+    </g>
 
     <!-- ============ LIST COLUMN ============ -->
+    <g clip-path="url(#clipList)">
     <text x="254" y="84" font-size="19" font-weight="600" letter-spacing="-0.3" fill="#F2F5F4">Записи</text>
     <text x="530" y="84" text-anchor="end" font-size="12" fill="#6C7A78">6 072 слова</text>
 
@@ -68,30 +68,30 @@
 
     <text x="262" y="163" font-size="11" letter-spacing="1.2" fill="#5B6866">СЕГОДНЯ</text>
 
-    <!-- active row -->
     <rect x="246" y="172" width="292" height="44" rx="7" fill="#1B2524"/>
     <rect x="260" y="184" width="7" height="7" rx="2" fill="#00C4C4"/>
     <text x="277" y="190" font-size="13.5" font-weight="500" fill="#F2F5F4">Синк по релизу</text>
     <text x="277" y="207" font-size="11.5" fill="#6C7A78">Встреча · 15:20 · 42 мин</text>
 
     <circle cx="263.5" cy="235" r="3.5" fill="none" stroke="#4C5A58" stroke-width="1.5"/>
-    <text x="277" y="234" font-size="13.5" font-weight="500" fill="#F2F5F4">Сейчас делаем продукт для стоматологии…</text>
+    <text x="277" y="234" font-size="13.5" font-weight="500" fill="#F2F5F4">Продукт для стоматологии…</text>
     <text x="277" y="251" font-size="11.5" fill="#6C7A78">Диктовка · 15:18 · 70 слов</text>
 
     <circle cx="263.5" cy="283" r="3.5" fill="none" stroke="#4C5A58" stroke-width="1.5"/>
-    <text x="277" y="282" font-size="13.5" font-weight="500" fill="#F2F5F4">Готовь архив с описанием для разработчика</text>
+    <text x="277" y="282" font-size="13.5" font-weight="500" fill="#F2F5F4">Архив с описанием…</text>
     <text x="277" y="299" font-size="11.5" fill="#6C7A78">Диктовка · 15:17 · 33 слова</text>
 
     <circle cx="263.5" cy="331" r="3.5" fill="none" stroke="#4C5A58" stroke-width="1.5"/>
-    <text x="277" y="330" font-size="13.5" font-weight="500" fill="#F2F5F4">Понятно, что чуда здесь не будет…</text>
+    <text x="277" y="330" font-size="13.5" font-weight="500" fill="#F2F5F4">Чуда здесь не будет…</text>
     <text x="277" y="347" font-size="11.5" fill="#6C7A78">Диктовка · 15:16 · 14 слов</text>
+    </g>
 
     <!-- ============ DETAIL COLUMN ============ -->
+    <g clip-path="url(#clipDetail)">
     <line x1="546" y1="56" x2="1200" y2="56" stroke="#1B2524"/>
     <text x="566" y="31" font-size="15" font-weight="600" letter-spacing="-0.2" fill="#F2F5F4">Синк по релизу</text>
     <text x="566" y="47" font-size="11.5" fill="#6C7A78">42 мин · 4 участника · RU · локально</text>
 
-    <!-- header controls -->
     <rect x="872" y="14" width="150" height="28" rx="7" fill="#141D1C"/>
     <rect x="874" y="16" width="52" height="24" rx="5" fill="#243231"/>
     <text x="900" y="32" text-anchor="middle" font-size="12.5" font-weight="500" fill="#F2F5F4">Итог</text>
@@ -104,12 +104,12 @@
     <text x="576" y="102" font-size="11" letter-spacing="1.2" fill="#5B6866">ТЕЗИСЫ</text>
     <line x1="636" y1="98" x2="1170" y2="98" stroke="#1B2524"/>
     <circle cx="580" cy="127" r="2.5" fill="#4C5A58"/>
-    <text x="596" y="131" font-size="14" fill="#DFE6E5">Релиз переносим на четверг: ждём миграцию базы и правки в биллинге.</text>
-    <rect x="1120" y="119" width="42" height="20" rx="5" fill="#00C4C4" fill-opacity="0.1"/>
+    <text x="596" y="131" font-size="14" fill="#DFE6E5">Релиз переносим на четверг — ждём миграцию базы.</text>
+    <rect x="1120" y="119" width="42" height="20" rx="5" fill="#12312F"/>
     <text x="1141" y="133" text-anchor="middle" font-size="11" fill="#3E9D9D" font-family="ui-monospace,Menlo,monospace">04:12</text>
     <circle cx="580" cy="159" r="2.5" fill="#4C5A58"/>
-    <text x="596" y="163" font-size="14" fill="#DFE6E5">Экспорт в трекер выносим в следующий спринт — в этом нет ресурса.</text>
-    <rect x="1120" y="151" width="42" height="20" rx="5" fill="#00C4C4" fill-opacity="0.1"/>
+    <text x="596" y="163" font-size="14" fill="#DFE6E5">Экспорт в трекер — в следующий спринт.</text>
+    <rect x="1120" y="151" width="42" height="20" rx="5" fill="#12312F"/>
     <text x="1141" y="165" text-anchor="middle" font-size="11" fill="#3E9D9D" font-family="ui-monospace,Menlo,monospace">11:38</text>
 
     <!-- РЕШЕНИЯ -->
@@ -117,7 +117,7 @@
     <line x1="642" y1="212" x2="1170" y2="212" stroke="#1B2524"/>
     <circle cx="580" cy="241" r="2.5" fill="#4C5A58"/>
     <text x="596" y="245" font-size="14" fill="#DFE6E5">Релиз — четверг, 18:00. Откат готовим заранее.</text>
-    <rect x="1120" y="233" width="42" height="20" rx="5" fill="#00C4C4" fill-opacity="0.1"/>
+    <rect x="1120" y="233" width="42" height="20" rx="5" fill="#12312F"/>
     <text x="1141" y="247" text-anchor="middle" font-size="11" fill="#3E9D9D" font-family="ui-monospace,Menlo,monospace">12:04</text>
 
     <!-- ЗАДАЧИ -->
@@ -125,19 +125,19 @@
     <line x1="632" y1="294" x2="1170" y2="294" stroke="#1B2524"/>
     <rect x="574" y="316" width="14" height="14" rx="4" fill="none" stroke="#3E9D9D" stroke-width="1.5"/>
     <text x="600" y="328" font-size="14" fill="#DFE6E5">Аня — миграция базы до среды</text>
-    <rect x="1120" y="315" width="42" height="20" rx="5" fill="#00C4C4" fill-opacity="0.1"/>
+    <rect x="1120" y="315" width="42" height="20" rx="5" fill="#12312F"/>
     <text x="1141" y="329" text-anchor="middle" font-size="11" fill="#3E9D9D" font-family="ui-monospace,Menlo,monospace">12:40</text>
     <rect x="574" y="350" width="14" height="14" rx="4" fill="none" stroke="#3E9D9D" stroke-width="1.5"/>
-    <text x="600" y="362" font-size="14" fill="#DFE6E5">Вы — письмо команде с итогами сегодня</text>
-    <rect x="1120" y="349" width="42" height="20" rx="5" fill="#00C4C4" fill-opacity="0.1"/>
+    <text x="600" y="362" font-size="14" fill="#DFE6E5">Вы — письмо команде с итогами</text>
+    <rect x="1120" y="349" width="42" height="20" rx="5" fill="#12312F"/>
     <text x="1141" y="363" text-anchor="middle" font-size="11" fill="#3E9D9D" font-family="ui-monospace,Menlo,monospace">39:02</text>
 
     <!-- ask footer -->
     <line x1="546" y1="576" x2="1200" y2="576" stroke="#1B2524"/>
-    <rect x="576" y="591" width="440" height="38" rx="9" fill="#141D1C" stroke="#1F2A29"/>
+    <rect x="576" y="591" width="594" height="38" rx="9" fill="#141D1C" stroke="#1F2A29"/>
     <text x="592" y="614" font-size="13" fill="#7D8B89">Спросить по этой встрече — «что решили по биллингу?»</text>
-    <text x="1000" y="614" text-anchor="end" font-size="11" fill="#5B6866" font-family="ui-monospace,Menlo,monospace">⏎</text>
-    <text x="1028" y="614" font-size="11.5" fill="#5B6866">ответ со ссылками на минуты</text>
+    <text x="1156" y="614" text-anchor="end" font-size="11" fill="#5B6866" font-family="ui-monospace,Menlo,monospace">⏎</text>
+    </g>
   </g>
 
   <rect x="0.5" y="0.5" width="1199" height="639" rx="13.5" fill="none" stroke="#253130"/>

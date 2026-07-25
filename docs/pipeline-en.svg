@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 240" width="1200" height="240" font-family="-apple-system,BlinkMacSystemFont,'Helvetica Neue',Helvetica,Arial,sans-serif">
+  <rect x="0" y="0" width="1200" height="240" rx="16" fill="#0E1615"/>
+  <rect x="0.5" y="0.5" width="1199" height="239" rx="15.5" fill="none" stroke="#1B2524"/>
+
+  <g>
+    <rect x="30" y="44" width="240" height="152" rx="12" fill="#131D1C" stroke="#253130"/>
+    <circle cx="66" cy="82" r="14" fill="#00C4C4"/><text x="66" y="87" text-anchor="middle" font-size="14" font-weight="700" fill="#04201F">1</text>
+    <text x="50" y="128" font-size="15" font-weight="600" fill="#F2F5F4">Two sources</text>
+    <text x="50" y="151" font-size="12" fill="#8B9A97">Mic = You, system = the other</text>
+    <text x="50" y="168" font-size="12" fill="#8B9A97">side. Roles from source, not ML.</text>
+
+    <rect x="330" y="44" width="240" height="152" rx="12" fill="#131D1C" stroke="#253130"/>
+    <circle cx="366" cy="82" r="14" fill="#00C4C4"/><text x="366" y="87" text-anchor="middle" font-size="14" font-weight="700" fill="#04201F">2</text>
+    <text x="350" y="128" font-size="15" font-weight="600" fill="#F2F5F4">On-device</text>
+    <text x="350" y="151" font-size="12" fill="#8B9A97">Parakeet TDT v3 transcribes.</text>
+    <text x="350" y="168" font-size="12" fill="#8B9A97">Audio never leaves the Mac.</text>
+
+    <rect x="630" y="44" width="240" height="152" rx="12" fill="#131D1C" stroke="#253130"/>
+    <circle cx="666" cy="82" r="14" fill="#00C4C4"/><text x="666" y="87" text-anchor="middle" font-size="14" font-weight="700" fill="#04201F">3</text>
+    <text x="650" y="128" font-size="15" font-weight="600" fill="#F2F5F4">Clean transcript</text>
+    <text x="650" y="151" font-size="12" fill="#8B9A97">Noise dropped, weak lines fixed</text>
+    <text x="650" y="168" font-size="12" fill="#8B9A97">by AI, terms via glossary.</text>
+
+    <rect x="930" y="44" width="240" height="152" rx="12" fill="#131D1C" stroke="#253130"/>
+    <circle cx="966" cy="82" r="14" fill="#00C4C4"/><text x="966" y="87" text-anchor="middle" font-size="14" font-weight="700" fill="#04201F">4</text>
+    <text x="950" y="128" font-size="15" font-weight="600" fill="#F2F5F4">Summary &amp; tasks</text>
+    <text x="950" y="151" font-size="12" fill="#8B9A97">Theses, decisions, questions.</text>
+    <text x="950" y="168" font-size="12" fill="#8B9A97">Tasks by voice only.</text>
+  </g>
+
+  <g fill="none" stroke="#00C4C4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M294 112 l10 8 l-10 8"/>
+    <path d="M594 112 l10 8 l-10 8"/>
+    <path d="M894 112 l10 8 l-10 8"/>
+  </g>
+</svg>
