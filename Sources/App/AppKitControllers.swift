@@ -89,10 +89,14 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     static func composite(dark: Bool, recording: Bool, paused: Bool, timer: String?, count: Int)
         -> (image: NSImage, dividerX: CGFloat) {
         let ink = dark ? NSColor(calibratedWhite: 0.90, alpha: 1) : NSColor(calibratedWhite: 0.16, alpha: 1)
-        let clay = NSColor(srgbRed: 0xB1 / 255, green: 0x5B / 255, blue: 0x3B / 255, alpha: 1)
-        let cream = NSColor(srgbRed: 0xF4 / 255, green: 0xEF / 255, blue: 0xEA / 255, alpha: 1)
+        // ZVON: red only for the recording dot; the tasks badge uses teal.
+        let rec = NSColor(srgbRed: 0xDE / 255, green: 0x3E / 255, blue: 0x2D / 255, alpha: 1)
+        let clay = dark ? NSColor(srgbRed: 0x00 / 255, green: 0xC4 / 255, blue: 0xC4 / 255, alpha: 1)
+                        : NSColor(srgbRed: 0x00 / 255, green: 0x97 / 255, blue: 0x98 / 255, alpha: 1)
+        let cream = dark ? NSColor(srgbRed: 0x04 / 255, green: 0x20 / 255, blue: 0x1F / 255, alpha: 1) : NSColor.white
         let H: CGFloat = 22
-        let markW: CGFloat = 10
+        let markH: CGFloat = 13
+        let markW: CGFloat = Brand.menubarGlyph.map { markH * ($0.size.width / max(1, $0.size.height)) } ?? 10
         let tFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         let timerW: CGFloat = timer.map { ($0 as NSString).size(withAttributes: [.font: tFont]).width + 5 } ?? 0
         let dotW: CGFloat = (recording && !paused) ? 8 : 0            // 4 gap + 4 dot
@@ -110,12 +114,18 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
 
         let img = NSImage(size: NSSize(width: totalW, height: H), flipped: false) { _ in
             var x: CGFloat = 0
-            // Parley mark
-            ink.setFill()
-            var bx = x
-            for h in [CGFloat(8), 13, 10] {
-                NSBezierPath(roundedRect: NSRect(x: bx, y: (H - h) / 2, width: 2, height: h), xRadius: 1, yRadius: 1).fill()
-                bx += 4
+            // ZVON mark — draw the template glyph tinted to the menu-bar ink (fallback: 3 bars).
+            if let g = Brand.menubarGlyph {
+                let r = NSRect(x: 0, y: (H - markH) / 2, width: markW, height: markH)
+                g.draw(in: r)
+                ink.set(); r.fill(using: .sourceAtop)
+            } else {
+                ink.setFill()
+                var bx = x
+                for h in [CGFloat(8), 13, 10] {
+                    NSBezierPath(roundedRect: NSRect(x: bx, y: (H - h) / 2, width: 2, height: h), xRadius: 1, yRadius: 1).fill()
+                    bx += 4
+                }
             }
             x += markW
             // recording timer
@@ -129,7 +139,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             }
             if recording && !paused {
                 x += 4
-                clay.setFill(); NSBezierPath(ovalIn: NSRect(x: x, y: (H - 4) / 2, width: 4, height: 4)).fill()
+                rec.setFill(); NSBezierPath(ovalIn: NSRect(x: x, y: (H - 4) / 2, width: 4, height: 4)).fill()
                 x += 4
             }
             // divider
@@ -138,7 +148,7 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             NSRect(x: x, y: (H - 12) / 2, width: dividerW, height: 12).fill()
             x += dividerW + dividerGap
             // tasks glyph (SF Symbol tinted to ink)
-            if let check = NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil)?
+            if let check = NSImage(systemSymbolName: "checklist", accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
                     .applying(NSImage.SymbolConfiguration(paletteColors: [ink]))) {
                 let cs = check.size
@@ -177,11 +187,13 @@ final class FloatingWidgetController {
 
     private var sizeCancellable: AnyCancellable?
     private var hiddenCancellable: AnyCancellable?
+    private var recCancellable: AnyCancellable?
+    private var collapseWork: DispatchWorkItem?
 
     /// Bring the widget on-screen (bottom-left) and expand it so it's easy to find.
     func reveal() {
         store.widgetHidden = false
-        store.widgetSize = .compact
+        store.widgetSize = .expanded
         if let screen = NSScreen.main {
             let v = screen.visibleFrame
             panel.setFrameOrigin(NSPoint(x: v.minX + PMetric.dockInset, y: v.minY + PMetric.dockInset))
@@ -241,6 +253,29 @@ final class FloatingWidgetController {
             .removeDuplicates()
             .sink { [weak self] hidden in Task { @MainActor in self?.applyHidden(hidden) } }
         applyHidden(store.widgetHidden)
+
+        // Auto-behavior (spec §4): recording starts → expand; stops → collapse after 3 s. We only
+        // expand on the rising edge, so a manual collapse mid-recording is respected (not overridden).
+        recCancellable = store.$isRecording
+            .removeDuplicates()
+            .sink { [weak self] rec in Task { @MainActor in self?.recordingChanged(rec) } }
+    }
+
+    private func recordingChanged(_ recording: Bool) {
+        // Dictation also flips isRecording (it opens a mic session) — but push-to-talk must NEVER
+        // drive the floating widget. Only real meeting recording expands/collapses it.
+        if store.isDictating { return }
+        collapseWork?.cancel()
+        if recording {
+            if !store.widgetHidden { store.widgetSize = .expanded }
+        } else {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, !self.store.isRecording else { return }
+                self.store.widgetSize = .puck
+            }
+            collapseWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+        }
     }
 
     private func applySize(_ size: WidgetSize) {

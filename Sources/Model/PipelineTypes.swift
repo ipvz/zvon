@@ -1,7 +1,7 @@
 import Foundation
 
 /// Floating-widget size (the NSPanel morphs between these).
-enum WidgetSize: Sendable { case puck, compact, expanded }
+enum WidgetSize: Sendable { case puck, expanded }   // collapsed tile ↔ 376-wide panel (spec: 4 states = these 2 × isRecording)
 
 /// Who is speaking. Source-based roles: the microphone is the local user, the system-audio
 /// loopback is everyone else on the call. Zero ML — 100% accurate for the 2-party split.

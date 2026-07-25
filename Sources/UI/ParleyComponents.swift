@@ -24,7 +24,7 @@ struct RecordingDot: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var on = false
     var body: some View {
-        Circle().fill(Color.pAccent).frame(width: size, height: size)
+        Circle().fill(Color.pRecording).frame(width: size, height: size)   // recording status = red (ZVON)
             .opacity(breathe && !reduceMotion ? (on ? 1 : 0.5) : 1)
             .animation(breathe && !reduceMotion ? .easeInOut(duration: 1.4).repeatForever(autoreverses: true) : .default, value: on)
             .onAppear { on = true }
@@ -249,6 +249,7 @@ struct KeyHintView: View {
 /// Static hotkey glyph for hints.
 enum Hotkeys {
     static let record = "⌘⇧R"
+    static let mark = "⌘M"
     static let search = "⌘K"
     static let export = "⌘E"
     static let openNotes = "⌘↩"

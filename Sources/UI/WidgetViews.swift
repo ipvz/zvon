@@ -12,7 +12,6 @@ struct WidgetRootView: View {
             } else {
                 switch store.widgetSize {
                 case .puck: PuckView(store: store)
-                case .compact: CompactWidget(store: store)
                 case .expanded: ExpandedWidget(store: store)
                 }
             }
@@ -21,7 +20,7 @@ struct WidgetRootView: View {
         // Right-click anywhere on the widget → hide it (also in the menu-bar popover + Settings).
         .contextMenu {
             Button("Скрыть виджет") { store.widgetHidden = true }
-            Button("Открыть Parley") {
+            Button("Открыть ZVON") {
                 NSApp.activate(ignoringOtherApps: true)
                 for w in NSApp.windows where w.identifier?.rawValue == "main" { w.makeKeyAndOrderFront(nil) }
             }
@@ -29,234 +28,242 @@ struct WidgetRootView: View {
     }
 }
 
-// MARK: - Puck (56×56) with equalizer mark
+// MARK: - Collapsed puck (62×62 app-icon tile) — states 1 & 2
 
 struct PuckView: View {
     @ObservedObject var store: TranscriptStore
-    private var live: Bool { store.isRecording && !store.isPaused }   // accent + motion only when truly recording
-    private var dictating: Bool { store.isDictating }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+    private var live: Bool { store.isRecording && !store.isPaused }
+
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: PRadius.puck).fill(Color.pPuck)
-                .overlay(RoundedRectangle(cornerRadius: PRadius.puck)
-                    .strokeBorder(dictating ? Color.pAccent : Color.pWidgetBorder, lineWidth: dictating ? 1.5 : 1))
-            EqualizerMark(active: live || dictating, color: (store.isRecording || dictating) ? .pInk1 : .pInk2)
-            // Accent recording dot — fully inside the top-right corner (no halo, reads on any wallpaper).
-            if live {
-                Circle().fill(Color.pAccent).frame(width: 10, height: 10).offset(x: 16, y: -16)
+        tile
+            // State 2: recording → red dot in the corner. Ring in the canvas colour so it separates
+            // from the teal tile and reads on any window under the widget (spec §2).
+            .overlay(alignment: .topTrailing) {
+                if store.isRecording {
+                    Circle().fill(Color.pRecording).frame(width: 16, height: 16)
+                        .overlay(Circle().strokeBorder(Color.pCanvas, lineWidth: 2.5))
+                        .opacity(live && !reduceMotion ? (pulse ? 0.4 : 1) : 1)
+                        .animation(live && !reduceMotion ? .easeInOut(duration: 1.6).repeatForever(autoreverses: true) : .default, value: pulse)
+                        .offset(x: 5, y: -5)
+                }
             }
+            // Bottom chip: chevron ⌄ when idle (state 1) → a mono timer pill while recording (state 2).
+            .overlay(alignment: .bottom) { bottomChip.offset(y: 11) }
+            .padding(20)
+            .contentShape(Rectangle())
+            .onTapGesture { store.widgetSize = .expanded }
+            // Press-and-hold → push-to-talk dictation (release inserts). Hotkey ⌥Space also works.
+            .onLongPressGesture(minimumDuration: 0.3, maximumDistance: 10,
+                                pressing: { p in if !p { store.stopDictation() } },
+                                perform: { store.startDictation() })
+            .onAppear { pulse = true }
+            .accessibilityLabel(store.isRecording ? "Идёт запись" : "ZVON")
+    }
+
+    // §1: the app-icon tile one-to-one, radius 17, soft shadow.
+    private var tile: some View {
+        Group {
+            if let mark = Brand.mark { Image(nsImage: mark).resizable() }
+            else { RoundedRectangle(cornerRadius: PRadius.puck, style: .continuous).fill(Color.pAccent) }
         }
-        .frame(width: 56, height: 56)
-        // Disclosure chip at the bottom edge — signals "opens a panel" (spec §1).
-        .overlay(alignment: .bottom) {
+        .frame(width: 62, height: 62)
+        .clipShape(RoundedRectangle(cornerRadius: PRadius.puck, style: .continuous))
+        .shadow(color: Color.black.opacity(0.22), radius: 10, x: 0, y: 8)
+    }
+
+    @ViewBuilder private var bottomChip: some View {
+        if store.isRecording, let s = store.recordingStartedAt {
+            ElapsedText(since: s, color: .pInk1, font: .system(size: 10.5, weight: .medium, design: .monospaced))
+                .padding(.horizontal, 7).frame(height: 18)
+                .background(Color.pWidgetBG).clipShape(Capsule())
+                .overlay(Capsule().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+        } else if !store.isRecording {
             Image(systemName: "chevron.down")
-                .font(.system(size: 8, weight: .semibold)).foregroundStyle(Color.pInk2)
-                .frame(width: 18, height: 18)
-                .background(Circle().fill(Color.pPuck))
+                .font(.system(size: 9, weight: .semibold)).foregroundStyle(Color.pInk2)
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(Color.pWidgetBG))
                 .overlay(Circle().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-                .offset(y: 8)
                 .accessibilityHidden(true)
         }
-        .shadow(color: Color.black.opacity(0.35), radius: 12, x: 0, y: 8)
-        .padding(22)
-        .contentShape(Rectangle())
-        // Tap → context-aware: Compact when idle, Expanded (live monitor) while recording.
-        .onTapGesture { store.widgetSize = store.isRecording ? .expanded : .compact }
-        // Press-and-hold the puck → push-to-talk dictation (release inserts). Hotkey ⌥Space also works.
-        .onLongPressGesture(minimumDuration: 0.3, maximumDistance: 10,
-                            pressing: { pressing in if !pressing { store.stopDictation() } },
-                            perform: { store.startDictation() })
-        .accessibilityLabel(store.isRecording ? "Идёт запись" : "Parley")
     }
 }
 
-/// The 3-bar Parley mark as a slow organic equalizer while recording (not a spinner).
-struct EqualizerMark: View {
-    var active: Bool
-    var color: Color
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var s: [CGFloat] = [1, 1, 1]
-    private let base: [CGFloat] = [12, 20, 15]
-    private let dur: [Double] = [1.1, 1.35, 0.95]
-    private let delay: [Double] = [0.0, 0.18, 0.34]
-    private let low: [CGFloat] = [0.5, 0.55, 0.45]
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 3) {
-            ForEach(0..<3, id: \.self) { i in
-                // Fixed height + scaleEffect (a transform) — animating the *height* invalidates
-                // layout every frame, which crashes NSISEngine inside a .preferredContentSize panel.
-                // This also matches the mockup's `transform: scaleY(...)`.
-                Capsule().fill(color)
-                    .frame(width: 3, height: base[i])
-                    .scaleEffect(x: 1, y: s[i], anchor: .center)
-            }
-        }
-        .frame(width: 15, height: 20)
-        .onAppear { animate() }
-        .onChange(of: active) { _, _ in animate() }
-    }
-
-    private func animate() {
-        guard active, !reduceMotion else {
-            withAnimation(.easeOut(duration: 0.3)) { s = [1, 1, 1] }
-            return
-        }
-        for i in 0..<3 {
-            s[i] = 1
-            withAnimation(.easeInOut(duration: dur[i]).repeatForever(autoreverses: true).delay(delay[i])) {
-                s[i] = low[i]
-            }
-        }
-    }
-}
-
-// MARK: - Compact (300)
-
-struct CompactWidget: View {
-    @ObservedObject var store: TranscriptStore
-    var body: some View {
-        VStack(alignment: .leading, spacing: PSpace.s) {
-            WidgetHeader(store: store, onCollapse: { store.widgetSize = .puck })
-            if store.isRecording {
-                liveLine(store.latestLine)
-                HStack(spacing: PSpace.xs) {
-                    WidgetTapButton(title: store.isPaused ? "Продолжить" : "Пауза") { store.togglePause() }
-                    WidgetTapButton(title: "Развернуть") { store.widgetSize = .expanded }
-                }
-            } else {
-                WidgetTapButton(title: "Начать запись") { if store.canRecord { store.toggle() } }
-            }
-        }
-        .padding(PSpace.m)
-        .frame(width: 300)
-        .widgetPanel()
-    }
-
-    @ViewBuilder
-    private func liveLine(_ line: TranscriptLine?) -> some View {
-        // Fixed two-line height so streaming text can't resize the NSPanel every tick (that constant
-        // frame churn on a .preferredContentSize panel is the NSISEngine crash class).
-        Group {
-            if let line {
-                (Text(line.speaker.title + " ").font(PFont.secondaryStrong).foregroundColor(line.speaker == .me ? Color.pInk1 : Color.pAccent)
-                    + Text(line.isFinal ? line.text : line.text + "…").font(PFont.secondary).foregroundColor(line.isFinal ? Color.pInk2 : Color.pInk3))
-                    .lineLimit(2)
-            } else {
-                Text("Слушаю…").font(PFont.secondary).foregroundStyle(Color.pInk3)
-            }
-        }
-        .frame(height: 38, alignment: .topLeading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-// MARK: - Expanded (440) — dialogue by side, ✦ Итог footer
+// MARK: - Expanded panel (376 fixed width) — states 3 & 4
 
 struct ExpandedWidget: View {
     @ObservedObject var store: TranscriptStore
+    @State private var appeared = false
+    private var recording: Bool { store.isRecording }
     private var meterActive: Bool { store.isRecording && !store.isPaused }
+    private var mine: TranscriptLine? { store.latestLine(for: .me) }
+    private var them: TranscriptLine? { store.latestLine(for: .them) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             WidgetHeader(store: store, onCollapse: { store.widgetSize = .puck })
-                .padding(.horizontal, PSpace.m).padding(.vertical, 14)
+                .padding(.horizontal, 13).frame(height: 44)
             Hairline(color: .pLine2)
-            dialogue
-            Hairline(color: .pLine2)
-            HStack(spacing: PSpace.xs) {
-                itogButton
-                Spacer()
-                Text("Открыть заметки").font(PFont.secondary).foregroundStyle(Color.pInk2)
-                    .contentShape(Rectangle()).onTapGesture { openNotes() }
+            if recording {
+                tracks
+                Hairline(color: .pLine2)
+                footer
+            } else {
+                idleBody
             }
-            .padding(.horizontal, PSpace.m).padding(.vertical, PSpace.s)
         }
-        .frame(width: 440)
+        .frame(width: 376)
         .widgetPanel()
+        // Appearance (spec §3): 200ms cubic-bezier(.2,.8,.2,1) — opacity + rise + subtle scale.
+        // All three are transforms/opacity (not layout) so they don't churn the panel's constraints.
+        .opacity(appeared ? 1 : 0)
+        .scaleEffect(appeared ? 1 : 0.97, anchor: .top)
+        .offset(y: appeared ? 0 : 8)
+        .animation(.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.2), value: appeared)
+        .onAppear { appeared = true }
     }
 
-    private var itogButton: some View {
-        HStack(spacing: 6) { Text("✦").foregroundStyle(Color.pAccent); Text("Итог") }
-            .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pOnAccent)
-            .padding(.horizontal, 12).frame(height: 30)
-            .background(Color.pAccent.opacity(0.16)).clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pAccent.opacity(0.5), lineWidth: 1))
-            .contentShape(Rectangle())
-            .onTapGesture { store.regenerateNotes(); openNotes() }
-    }
-
-    private var dialogue: some View {
-        let lastId = store.lines.last?.id
-        return ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    if store.lines.isEmpty {
-                        Text(store.isRecording ? "Parley слушает разговор…" : "Нажмите «Начать запись».")
-                            .font(PFont.secondary).foregroundStyle(Color.pInk3)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, PSpace.xs)
-                    } else {
-                        ForEach(Array(store.lines.enumerated()), id: \.element.id) { idx, line in
-                            MessageBubble(line: line,
-                                          showLabel: idx == 0 || store.lines[idx - 1].speaker != line.speaker,
-                                          showMeter: line.id == lastId && meterActive,
-                                          levels: line.speaker == .me ? store.levels : store.levelsThem,
-                                          meterActive: meterActive).id(line.id)
-                        }
-                    }
-                }
-                .padding(16)
+    // §2 body: only the last replica of each side; never accumulate, never scroll.
+    private var tracks: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            if mine == nil && them == nil {
+                Text(meterActive ? "Слушаю разговор…" : "На паузе")
+                    .font(.system(size: 12.5)).foregroundStyle(Color.pInk3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxHeight: 236)
-            .onChange(of: store.lines.last?.id) { _, id in
-                guard let id else { return }
-                withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .bottom) }
+            if let m = mine {
+                TrackRow(mine: true, text: m.isFinal ? m.text : m.text + "…", active: meterActive)
+            }
+            if let t = them {
+                TrackRow(mine: false, text: t.isFinal ? t.text : t.text + "…", active: meterActive)
             }
         }
+        .padding(13)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func openNotes() {
+    // §2 footer: «Подвести итог» (solid accent — stop + open summary), «Заметки», ⌘M hint.
+    private var footer: some View {
+        HStack(spacing: 10) {
+            Text("Подвести итог")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                .padding(.horizontal, 12).frame(height: 28)
+                .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: PRadius.control))
+                .contentShape(Rectangle())
+                .onTapGesture { if store.isRecording { store.stop() }; store.regenerateNotes(); openMain() }
+            Text("Заметки").font(.system(size: 12)).foregroundStyle(Color.pInk2)
+                .contentShape(Rectangle()).onTapGesture { openMain() }
+            Spacer(minLength: 0)
+            Text(Hotkeys.mark).font(PFont.mono).foregroundStyle(Color.pInk3)
+        }
+        .padding(.horizontal, 13).frame(height: 44)
+    }
+
+    // §4: idle expanded — one Start button + the always-on privacy line. No recents, no menu.
+    private var idleBody: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            Text("Начать запись")
+                .font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                .frame(maxWidth: .infinity).frame(height: 34)
+                .background(Color.pAccent.opacity(store.canRecord ? 1 : 0.5))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contentShape(Rectangle())
+                .onTapGesture { if store.canRecord { store.start() } }
+            HStack(spacing: 9) {
+                Circle().fill(Color.pAccent).frame(width: 6, height: 6)
+                Text("Слышу микрофон и звук встречи. Бот в звонок не заходит")
+                    .font(.system(size: 11.5)).foregroundStyle(Color.pInk2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine2, lineWidth: 1))
+        }
+        .padding(.horizontal, 13).padding(.vertical, 14)
+    }
+
+    private func openMain() {
         NSApp.activate(ignoringOtherApps: true)
         for w in NSApp.windows where w.identifier?.rawValue == "main" { w.makeKeyAndOrderFront(nil) }
     }
 }
 
-/// A chat bubble with a source label above: Собеседник left/neutral, Вы right/accent-tinted.
-/// The label shows only when the speaker changes (grouped, iMessage-style) so runs of the same
-/// speaker don't get a redundant label between every bubble.
-struct MessageBubble: View {
-    let line: TranscriptLine
-    var showLabel: Bool = true
-    var showMeter: Bool = false
-    var levels: [Float] = []
-    var meterActive: Bool = false
-    private var mine: Bool { line.speaker == .me }
-    private var sourceLabel: String { mine ? "Микрофон · Вы" : "Динамик · Собеседник" }
+/// One dialogue track — the last replica of one side. Mic (Вы): right-aligned, accent bubble, live
+/// level bars left of the label. Собеседник: left-aligned, grey bubble, three "speaking" dots.
+struct TrackRow: View {
+    let mine: Bool
+    let text: String
+    var active: Bool = false
 
     var body: some View {
-        VStack(alignment: mine ? .trailing : .leading, spacing: 6) {
-            if showLabel || showMeter {
-                HStack(spacing: 8) {
-                    if mine && showMeter { LevelMeterView(levels: levels, active: meterActive, bars: 3, leading: 2) }
-                    if showLabel { Text(sourceLabel).font(.system(size: 10, weight: .semibold)).tracking(0.4).foregroundStyle(Color.pInk3) }
-                    if !mine && showMeter { LevelMeterView(levels: levels, active: meterActive, bars: 3, leading: 2) }
-                }
+        VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+            HStack(spacing: 7) {
+                if mine { MicBars(active: active) }
+                Text(mine ? "МИКРОФОН · ВЫ" : "ДИНАМИК · СОБЕСЕДНИК")
+                    .font(.system(size: 10)).tracking(0.6)
+                    .foregroundStyle(mine ? Color.pStatusLocal : Color.pInk3)
+                if !mine { SpeakingDots(active: active) }
             }
-            Text(line.isFinal ? line.text : line.text + "…")
-                .font(.system(size: 14)).lineSpacing(3)
-                .foregroundStyle(mine ? Color.pOnAccent : Color.pInk1)
+            Text(text)
+                .font(.system(size: 12.5)).lineSpacing(2)
+                .foregroundStyle(mine ? Color.pMicBubbleText : Color.pInk1)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14).padding(.vertical, 11)
-                .background(mine ? Color.pAccent.opacity(0.24) : Color.pSelection)
-                .clipShape(bubbleShape)
-                .overlay(bubbleShape.strokeBorder(mine ? Color.pAccent.opacity(0.42) : Color.pWidgetBorder, lineWidth: 1))
-                .frame(maxWidth: 340, alignment: mine ? .trailing : .leading)
+                .padding(.horizontal, 10).padding(.vertical, 7)
+                .background(mine ? Color.pAccent.opacity(0.16) : Color.pSelection)
+                .clipShape(shape)
+                .overlay(shape.strokeBorder(mine ? Color.pAccent.opacity(0.28) : Color.clear, lineWidth: 1))
+                .frame(maxWidth: 376 * (mine ? 0.76 : 0.82), alignment: mine ? .trailing : .leading)
         }
         .frame(maxWidth: .infinity, alignment: mine ? .trailing : .leading)
     }
 
-    private var bubbleShape: UnevenRoundedRectangle {
-        mine ? UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 14, bottomTrailingRadius: 4, topTrailingRadius: 14)
-             : UnevenRoundedRectangle(topLeadingRadius: 14, bottomLeadingRadius: 4, bottomTrailingRadius: 14, topTrailingRadius: 14)
+    private var shape: UnevenRoundedRectangle {
+        mine ? UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 3, topTrailingRadius: 10)
+             : UnevenRoundedRectangle(topLeadingRadius: 10, bottomLeadingRadius: 10, bottomTrailingRadius: 10, topTrailingRadius: 3)
+    }
+}
+
+/// Four thin accent bars for the mic track — periods 560–700 ms, each its own phase (spec §3).
+/// Fixed height + scaleY (a transform, not layout) so it never churns the panel's constraints.
+struct MicBars: View {
+    var active: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var phase = false
+    private let periods: [Double] = [0.62, 0.70, 0.56, 0.66]
+    private let lo: [CGFloat] = [0.35, 0.30, 0.42, 0.55]
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 2) {
+            ForEach(0..<4, id: \.self) { i in
+                Capsule().fill(Color.pAccent)
+                    .frame(width: 2.5, height: 18)
+                    .scaleEffect(x: 1, y: phase ? lo[i] : 1, anchor: .center)
+                    .animation(active && !reduceMotion ? .easeInOut(duration: periods[i]).repeatForever(autoreverses: true) : .default, value: phase)
+            }
+        }
+        .frame(width: 17, height: 18)
+        .opacity(active ? 1 : 0.4)
+        .onAppear { phase = true }
+    }
+}
+
+/// Three pulsing dots after the Собеседник label while they're talking (spec §3).
+struct SpeakingDots: View {
+    var active: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var on = false
+    var body: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<3, id: \.self) { i in
+                Circle().fill(Color.pInk3).frame(width: 3, height: 3)
+                    .opacity(on ? 1 : 0.25)
+                    .animation(active && !reduceMotion ? .easeInOut(duration: 1.2).repeatForever(autoreverses: true).delay(Double(i) * 0.2) : .default, value: on)
+            }
+        }
+        .opacity(active ? 1 : 0)
+        .onAppear { on = true }
     }
 }
 
@@ -266,28 +273,34 @@ struct WidgetHeader: View {
     @ObservedObject var store: TranscriptStore
     var onCollapse: (() -> Void)?
     var body: some View {
-        HStack(spacing: PSpace.xs) {
+        HStack(spacing: 9) {
             if store.isRecording && !store.isPaused {
-                RecordingDot(size: 8)
-                Text("Запись").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
-                Spacer()
-                if let s = store.recordingStartedAt { ElapsedText(since: s, color: .pInk2) }
+                RecordingDot(size: 7)
+                Text("Запись").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                if let s = store.recordingStartedAt {
+                    ElapsedText(since: s, color: .pInk2, font: .system(size: 12, design: .monospaced))
+                }
+                Spacer(minLength: 8)
+                // «локально» — reassures the recording never leaves the Mac (spec §2 header).
+                Text("локально").font(.system(size: 11.5)).foregroundStyle(Color.pStatusLocal)
             } else if store.isPaused {
-                Circle().fill(Color.pControlBorder).frame(width: 8, height: 8)
-                Text("Пауза").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
-                Spacer()
-                if let s = store.recordingStartedAt { ElapsedText(since: s, color: .pInk3) }
+                Circle().fill(Color.pControlBorder).frame(width: 7, height: 7)
+                Text("Пауза").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                if let s = store.recordingStartedAt {
+                    ElapsedText(since: s, color: .pInk3, font: .system(size: 12, design: .monospaced))
+                }
+                Spacer(minLength: 8)
             } else {
-                Circle().fill(isErrorStage ? Color.pDanger : Color.pControlBorder).frame(width: 8, height: 8)
-                Text(idleStatus).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1).lineLimit(1)
-                Spacer()
+                Circle().fill(isErrorStage ? Color.pDanger : Color.pAccent).frame(width: 7, height: 7)
+                Text(idleStatus).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1).lineLimit(1)
+                Spacer(minLength: 8)
                 if store.stage == .ready { Text(Hotkeys.record).font(PFont.mono).foregroundStyle(Color.pInk3) }
             }
             if let onCollapse {
-                Image(systemName: "chevron.down")
+                Image(systemName: "chevron.up")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.pInk2)
-                    .frame(width: 24, height: 24)
+                    .foregroundStyle(Color.pInk3)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onCollapse)
             }
@@ -298,7 +311,7 @@ struct WidgetHeader: View {
 
     private var idleStatus: String {
         switch store.stage {
-        case .ready, .listening: return "Готов к записи"
+        case .ready, .listening: return "Готово к записи"
         case .preparing: return "Готовлю модель…"
         case .downloading(let f): return "Скачиваю \(Int(f * 100))%"
         case .needsModel: return "Модель не загружена"
@@ -330,34 +343,15 @@ struct WidgetError: View {
 private struct WidgetPanelChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .background(Color.pCard)
-            .clipShape(RoundedRectangle(cornerRadius: PRadius.widget))
-            .overlay(RoundedRectangle(cornerRadius: PRadius.widget).strokeBorder(Color.pLine, lineWidth: 1))
-            .shadow(color: Color(red: 45/255, green: 38/255, blue: 30/255).opacity(0.28), radius: 16, x: 0, y: 12)
-            .padding(10)
+            // Spec §3: bg #101817, border #253130, radius 14, shadow 0 18 40 rgba(12,12,12,0.28).
+            .background(Color.pWidgetBG)
+            .clipShape(RoundedRectangle(cornerRadius: PRadius.widget, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: PRadius.widget, style: .continuous).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+            .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 12)
+            .padding(20)   // clears the shadow so it never clips into a hard rectangle
     }
 }
 extension View { func widgetPanel() -> some View { modifier(WidgetPanelChrome()) } }
-
-/// Tap-based button — reliable inside a non-activating NSPanel where AppKit Buttons may not
-/// receive clicks (the panel never becomes key). Styled like the bordered/primary buttons.
-struct WidgetTapButton: View {
-    let title: String
-    var filled: Bool = false
-    let action: () -> Void
-    var body: some View {
-        Text(title)
-            .font(PFont.secondaryStrong)
-            .foregroundStyle(filled ? Color.pOnFill : Color.pInk1)
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, PSpace.xs + 1)
-            .background(filled ? Color.pInk1 : Color.pField)
-            .clipShape(RoundedRectangle(cornerRadius: PRadius.control))
-            .overlay(RoundedRectangle(cornerRadius: PRadius.control).strokeBorder(filled ? Color.clear : Color.pButtonBorder, lineWidth: 1))
-            .contentShape(Rectangle())
-            .onTapGesture(perform: action)
-    }
-}
 
 // MARK: - Dictation HUD (spectrogram pill while dictating · no-field card on finish)
 
@@ -367,8 +361,8 @@ struct DictationHUDView: View {
     @ObservedObject var store: TranscriptStore
     // Sizes include a margin ≥ the card/pill shadow radius so the shadow is never clipped into a
     // hard-edged rectangle (that clip is the "frame" artifact behind the card).
-    static let pillSize = CGSize(width: 150, height: 92)
-    static let processingSize = CGSize(width: 220, height: 92)
+    static let pillSize = CGSize(width: 420, height: 100)
+    static let processingSize = CGSize(width: 320, height: 100)
     static let cardSize = CGSize(width: 424, height: 300)
 
     static func size(for store: TranscriptStore) -> CGSize {
@@ -394,42 +388,85 @@ struct DictationHUDView: View {
     }
 }
 
-/// Shown while the LLM polishes a dictation before it's inserted (brief, dictation-only).
+/// Fixed dark-capsule palette for the dictation pill (mockup «ZVON Pills» — always dark, theme-agnostic).
+private enum PillC {
+    static let bg        = Color(red: 14/255,  green: 22/255,  blue: 21/255).opacity(0.95)
+    static let text      = Color(red: 242/255, green: 245/255, blue: 244/255)   // #F2F5F4
+    static let muted     = Color(red: 139/255, green: 154/255, blue: 151/255)   // #8B9A97
+    static let divider   = Color(red: 43/255,  green: 55/255,  blue: 54/255)    // #2B3736
+    static let teal      = Color(red: 0,       green: 196/255, blue: 196/255)   // #00C4C4
+    static let tealBright = Color(red: 79/255, green: 224/255, blue: 224/255)   // #4FE0E0
+    static let idleBar   = Color(red: 91/255,  green: 104/255, blue: 102/255)   // #5B6866
+}
+
+/// After the key is released: the LLM polishes the text. Dark capsule + a light sweep (mockup §1).
 struct ProcessingPill: View {
+    @State private var sweep = false
     var body: some View {
-        HStack(spacing: 9) {
-            PSpinner(size: 15)
-            Text("Обрабатываю…").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk2)
+        HStack(spacing: 11) {
+            if let g = Brand.pillGlyph { Image(nsImage: g).resizable().scaledToFit().frame(width: 20, height: 14) }
+            Text("Причёсываю текст…").font(.system(size: 12)).foregroundStyle(PillC.tealBright).fixedSize()
         }
-        .frame(height: 18).padding(.horizontal, 16)
-        .background(Color.pCard).clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.45), radius: 10, x: 0, y: 5)
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(PillC.bg)
+        .overlay(
+            GeometryReader { geo in
+                LinearGradient(colors: [.clear, PillC.teal.opacity(0.22), .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: geo.size.width * 0.38)
+                    .offset(x: sweep ? geo.size.width * 1.25 : -geo.size.width * 0.5)   // transform-only
+            }
+        )
+        .clipShape(Capsule())
+        .shadow(color: Color.black.opacity(0.30), radius: 14, x: 0, y: 10)
+        .onAppear { withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) { sweep = true } }
     }
 }
 
-/// The dictating affordance: thin bars driven by the LIVE mic level (scaleY = transform, not
-/// layout). Quiet → bars rest flat; speaking → they move. No perpetual canned animation.
+/// The dictating capsule (mockup §1): white wave glyph · 7 live level bars · «Отпустите, чтобы
+/// вставить» + the trigger-key hint. When the input is silent it reads «Слушаю…» with grey bars.
 struct SpectrogramPill: View {
     @ObservedObject var store: TranscriptStore
-    private let count = 13
+    private var speaking: Bool { (store.levels.suffix(6).max() ?? 0) > 0.05 }
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 13) {
+            if let g = Brand.pillGlyph { Image(nsImage: g).resizable().scaledToFit().frame(width: 24, height: 16) }
+            PillLevelBars(levels: store.levels, speaking: speaking)
+            if speaking {
+                Text("Отпустите, чтобы вставить").font(.system(size: 12.5)).foregroundStyle(PillC.text).fixedSize()
+                Text(store.dictationTrigger.shortHint)
+                    .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(PillC.muted).fixedSize()
+                    .padding(.leading, 13)
+                    .overlay(alignment: .leading) { Rectangle().fill(PillC.divider).frame(width: 1, height: 15) }
+            } else {
+                Text("Слушаю…").font(.system(size: 12)).foregroundStyle(PillC.muted).fixedSize()
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 11)
+        .background(PillC.bg).clipShape(Capsule())
+        .shadow(color: Color.black.opacity(0.30), radius: 17, x: 0, y: 14)
+    }
+}
+
+/// 7 bars, 3px, height ≤20, driven by the live mic level via scaleY (a transform, never layout —
+/// so it's safe inside the fixed-size HUD panel). Teal while speaking, grey at rest.
+struct PillLevelBars: View {
+    let levels: [Float]
+    let speaking: Bool
+    private let count = 7
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
             ForEach(0..<count, id: \.self) { i in
-                Capsule().fill(Color.pInk1)
-                    .frame(width: 2, height: 14)
+                Capsule().fill(speaking ? PillC.teal : PillC.idleBar)
+                    .frame(width: 3, height: 20)
                     .scaleEffect(x: 1, y: scale(i), anchor: .center)
             }
         }
-        .frame(height: 16).padding(.horizontal, 12)
-        .background(Color.pCard).clipShape(Capsule())
-        .overlay(Capsule().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.45), radius: 10, x: 0, y: 5)
-        .animation(.easeOut(duration: 0.1), value: store.levels)
+        .frame(height: 20)
+        .animation(.easeOut(duration: 0.1), value: levels)
     }
     private func scale(_ i: Int) -> CGFloat {
-        let base: CGFloat = 0.14   // near-flat when silent
-        let w = Array(store.levels.suffix(count))
+        let base: CGFloat = speaking ? 0.25 : 0.2   // 0.2×20 = 4px rest (mockup idle height)
+        let w = Array(levels.suffix(count))
         let idx = i - (count - w.count)
         guard idx >= 0, idx < w.count else { return base }
         let v = CGFloat(max(0, min(1, w[idx] * 7)))
@@ -551,7 +588,7 @@ struct MenuBarPopover: View {
                     }
                     Hairline(color: .pLine2).padding(.vertical, 4)
                 }
-                popRow("Открыть Parley", Hotkeys.openNotes) { openMain(); closePopover() }
+                popRow("Открыть ZVON", Hotkeys.openNotes) { openMain(); closePopover() }
                 popRow(store.widgetHidden ? "Показать виджет" : "Скрыть виджет", "") {
                     if store.widgetHidden { FloatingWidgetController.shared?.reveal() } else { store.widgetHidden = true }
                     closePopover()
@@ -602,13 +639,12 @@ struct MenuBarPopover: View {
         } else {
             Button { if store.canRecord { store.start(); closePopover() } } label: {
                 HStack(spacing: PSpace.xs) {
-                    Circle().fill(Color.pAccent).frame(width: 9, height: 9)
+                    Circle().fill(Color.pOnAccent).frame(width: 8, height: 8)
                     Text("Начать запись")
                 }
                 .font(PFont.secondaryStrong).foregroundStyle(Color.pOnAccent)
                 .frame(maxWidth: .infinity).frame(height: 34)
-                .background(Color.pAccent.opacity(0.14)).clipShape(RoundedRectangle(cornerRadius: 9))
-                .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.pAccent.opacity(0.45), lineWidth: 1))
+                .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: 9))
                 .opacity(store.canRecord ? 1 : 0.5)
             }.buttonStyle(.plain)
         }

@@ -2,24 +2,22 @@ import SwiftUI
 
 /// Which view the main pane shows — switched from the sidebar nav (single window).
 enum MainView: String, CaseIterable, Identifiable {
-    case meeting, all, tasks, dict, gloss
+    case meeting, records, tasks, gloss
     var id: String { rawValue }
     var title: String {
         switch self {
         case .meeting: return "Встреча"
-        case .all:     return "Все записи"
+        case .records: return "Записи"
         case .tasks:   return "Задачи"
-        case .dict:    return "Диктовки"
-        case .gloss:   return "Глоссарий"
+        case .gloss:   return "Словарь"
         }
     }
     var icon: String {
         switch self {
         case .meeting: return "waveform"
-        case .all:     return "rectangle.stack"
+        case .records: return "rectangle.stack"
         case .tasks:   return "checklist"
-        case .dict:    return "text.bubble"
-        case .gloss:   return "arrow.left.arrow.right"
+        case .gloss:   return "character.book.closed"
         }
     }
 }
@@ -290,61 +288,6 @@ struct TaskCard: View {
     }
 }
 
-// MARK: - Dictations
-
-struct DictView: View {
-    @ObservedObject var store: TranscriptStore
-    @ObservedObject var sessions = SessionStore.shared
-    var body: some View {
-        libraryColumn {
-            let dicts = sessions.sessions.filter { $0.kind == .dictation }
-            statHeader(count: dicts.count)
-            if dicts.isEmpty {
-                Text("Диктовок пока нет. Зажми триггер диктовки и говори.")
-                    .font(PFont.secondary).foregroundStyle(Color.pInk3)
-            }
-            ForEach(groupByDay(dicts, { $0.date }), id: \.0) { day, items in
-                SectionLabel(text: day).padding(.bottom, 4)
-                ForEach(items) { d in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(d.title).font(.system(size: 14)).lineSpacing(2).foregroundStyle(Color.pInk1)
-                            .lineLimit(4).truncationMode(.tail)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("\(wordCount(d.title)) слов · \(SessionStore.time.string(from: d.date))")
-                            .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
-                    }
-                    .padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading)
-                    .overlay(alignment: .bottom) { Rectangle().fill(Color.pLine2).frame(height: 1) }
-                }
-                .padding(.bottom, 8)
-            }
-        }
-    }
-    private func wordCount(_ s: String) -> Int { s.split { $0 == " " || $0 == "\n" }.count }
-
-    /// Lifetime dictation stat (Wispr-style): total words + number of dictations.
-    private func statHeader(count: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text("\(store.totalDictatedWords)")
-                .font(.system(size: 30, weight: .semibold)).foregroundStyle(Color.pInk1)
-                .monospacedDigit()
-            Text("слов надиктовано").font(PFont.secondary).foregroundStyle(Color.pInk2)
-            Spacer()
-            if count > 0 {
-                Text("\(count) \(plural(count, "диктовка", "диктовки", "диктовок"))")
-                    .font(.system(size: 12)).foregroundStyle(Color.pInk3)
-            }
-        }
-        .padding(.bottom, 18)
-    }
-    private func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
-        let m10 = n % 10, m100 = n % 100
-        if m10 == 1 && m100 != 11 { return one }
-        if (2...4).contains(m10) && !(12...14).contains(m100) { return few }
-        return many
-    }
-}
-
 // MARK: - All records
 
 enum RecordFilter: String, CaseIterable, Identifiable {
@@ -354,9 +297,13 @@ enum RecordFilter: String, CaseIterable, Identifiable {
     func matches(_ s: SessionRecord) -> Bool {
         switch self { case .all: return true; case .meeting: return s.kind == .meeting; case .dict: return s.kind == .dictation }
     }
+    var sessionFilter: SessionFilter {
+        switch self { case .all: return .all; case .meeting: return .meetings; case .dict: return .dictation }
+    }
 }
 
-struct AllView: View {
+/// «Записи» — meetings + dictations in one filtered list (spec §5.1). One object type, two origins.
+struct RecordsView: View {
     @ObservedObject var store: TranscriptStore
     @ObservedObject var sessions = SessionStore.shared
     var onOpen: (UUID) -> Void
@@ -372,7 +319,7 @@ struct AllView: View {
         ]
         return libraryColumn {
             if all.count > 1 || filter != .all {
-                RecordFilterBar(filter: $filter, counts: counts).padding(.bottom, 20)
+                RecordFilterBar(filter: $filter, counts: counts).padding(.bottom, 16)
             }
             if shown.isEmpty {
                 Text(all.isEmpty && !store.isRecording ? "Пока нет записей."
@@ -381,30 +328,51 @@ struct AllView: View {
             }
             ForEach(groupByDay(shown, { $0.date }), id: \.0) { day, items in
                 SectionLabel(text: day).padding(.bottom, 4)
-                ForEach(items) { s in
-                    Button { if s.kind == .meeting { onOpen(s.id) } } label: { row(s) }.buttonStyle(.plain)
-                }
-                .padding(.bottom, 8)
+                ForEach(items) { s in RecordRow(s: s, open: { onOpen(s.id) }) }
+                .padding(.bottom, 10)
             }
         }
     }
-    private func row(_ s: SessionRecord) -> some View {
-        HStack(spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+}
+
+/// One record row — same shape for both types; the left marker distinguishes them.
+private struct RecordRow: View {
+    let s: SessionRecord
+    let open: () -> Void
+    @State private var hover = false
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 11) {
+                marker
+                VStack(alignment: .leading, spacing: 2) {
                     Text(s.title).font(.system(size: 14)).foregroundStyle(Color.pInk1).lineLimit(1)
-                    TypeBadge(meeting: s.kind == .meeting)
+                    Text(meta).font(PFont.mono).foregroundStyle(Color.pInk3)
                 }
-                if s.kind == .meeting, let sum = s.noteSummary?.first {
-                    Text(sum).font(.system(size: 12)).foregroundStyle(Color.pInk3).lineLimit(1)
-                }
+                Spacer(minLength: 8)
             }
-            Spacer(minLength: 8)
-            Text(s.subtitle).font(PFont.mono).foregroundStyle(Color.pInk3)
+            .padding(.horizontal, 10).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 8).fill(hover ? Color.pSelection : Color.clear))
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 16).frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .overlay(alignment: .bottom) { Rectangle().fill(Color.pLine2).frame(height: 1) }
+        .buttonStyle(.plain).onHover { hover = $0 }
+    }
+    @ViewBuilder private var marker: some View {
+        if s.kind == .meeting {
+            RoundedRectangle(cornerRadius: 3).fill(Color.pAccent).frame(width: 9, height: 9)
+        } else {
+            Circle().strokeBorder(Color.pInk3, lineWidth: 1.5).frame(width: 9, height: 9)
+        }
+    }
+    private var meta: String {
+        let t = SessionStore.time.string(from: s.date)
+        switch s.kind {
+        case .meeting:
+            let d = s.durationSec.map { " · \(Int(($0 / 60).rounded())) мин" } ?? ""
+            return "Встреча · \(t)\(d)"
+        case .dictation:
+            let w = s.title.split { $0 == " " || $0 == "\n" }.count
+            return "Диктовка · \(t) · \(w) слов"
+        }
     }
 }
 
@@ -429,7 +397,7 @@ struct RecordFilterBar: View {
                                 .foregroundStyle(active ? Color.pAccent : Color.pInk3)
                         }
                     }
-                    .padding(.horizontal, 14).frame(height: 30)
+                    .frame(maxWidth: .infinity).frame(height: 30)
                     .background {
                         if active {
                             RoundedRectangle(cornerRadius: 8).fill(Color.pCard)
@@ -443,13 +411,12 @@ struct RecordFilterBar: View {
                 .accessibilityLabel(f.title)
                 .accessibilityAddTraits(active ? [.isSelected] : [])
             }
-            Spacer(minLength: 0)
         }
         .padding(4)
+        .frame(maxWidth: .infinity)
         .background(Color.pField)
         .clipShape(RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11).strokeBorder(Color.pLine, lineWidth: 1))
-        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

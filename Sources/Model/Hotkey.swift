@@ -22,6 +22,19 @@ enum DictationTrigger: String, CaseIterable, Identifiable {
     }
 
     /// keyCode carried by the modifier's `flagsChanged` event (nil = use the KeyboardShortcuts combo).
+    /// Compact key hint shown in the dictation capsule (mockup: «правый ⌘»).
+    var shortHint: String {
+        switch self {
+        case .combo:        return "⌥Space"
+        case .fn:           return "fn"
+        case .leftCommand:  return "левый ⌘"
+        case .rightCommand: return "правый ⌘"
+        case .leftOption:   return "левый ⌥"
+        case .rightOption:  return "правый ⌥"
+        case .rightControl: return "правый ⌃"
+        }
+    }
+
     var keyCode: UInt16? {
         switch self {
         case .combo:        return nil

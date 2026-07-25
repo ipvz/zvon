@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key>
-	<string>Parley</string>
+	<string>ZVON</string>
 	<key>CFBundleDisplayName</key>
-	<string>Parley</string>
+	<string>ZVON</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleExecutable</key>
@@ -23,11 +23,11 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Parley слушает микрофон, чтобы расшифровывать вашу речь в реальном времени.</string>
+	<string>ZVON слушает микрофон, чтобы расшифровывать вашу речь в реальном времени.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Parley записывает звук из динамика (собеседников на созвоне), чтобы расшифровывать их речь. Аудио не покидает ваш Mac.</string>
+	<string>ZVON записывает звук из динамика (собеседников на созвоне), чтобы расшифровывать их речь. Аудио не покидает ваш Mac.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>Parley добавляет задачи из встреч в приложение «Напоминания», если вы это выберете.</string>
+	<string>ZVON добавляет задачи из встреч в приложение «Напоминания», если вы это выберете.</string>
 	<!-- LLM-заметки ходят на self-hosted эндпоинт по HTTP. ATS иначе блокирует незащищённое
 	     соединение (curl не проверяет ATS — потому там работало, а в приложении нет). -->
 	<key>NSAppTransportSecurity</key>

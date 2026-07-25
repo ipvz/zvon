@@ -21,53 +21,56 @@ extension Color {
         Color(nsColor: NSColor(lightHex: light, darkHex: dark))
     }
 
+    // ── ZVON palette v1.0 (was Parley/clay → ZVON/teal). Token names kept; values remapped.
     // Text
-    static let pInk1 = parley(0x232120, 0xECEAE4)   // primary
-    static let pInk2 = parley(0x6A665E, 0xA29D94)   // secondary
-    static let pInk3 = parley(0xA8A399, 0x6C6860)   // tertiary
-    static let pOnFill = Color.white                // on accent / dark fills
+    static let pInk1 = parley(0x0C1413, 0xF2F5F4)   // text
+    static let pInk2 = parley(0x5E6B69, 0x8B9A97)   // textSecondary
+    static let pInk3 = parley(0x8A9694, 0x6C7A78)   // textTertiary
+    static let pOnFill = parley(0xFFFFFF, 0x04201F) // text ON an accent fill (accentOn)
 
-    // Surfaces (warm neutral)
-    static let pDesk = parley(0xE8E6E1, 0x14120F)   // behind windows
-    static let pCanvas = parley(0xFDFCFA, 0x1C1A17) // window body / notes
-    static let pRail = parley(0xF5F3EF, 0x201E19)   // right rail / sidebar
-    static let pChrome = parley(0xF6F4F0, 0x201E1A) // toolbar / status bar
-    static let pWidget = parley(0xEDEBE6, 0x1A1815) // widget canvas
-    static let pCard = parley(0xFFFFFF, 0x241F1B)   // cards, panels
-    static let pPuck = parley(0xFFFFFF, 0x262320)   // floating puck
-    static let pField = parley(0xFBFAF8, 0x17150F)  // inputs (rest bg)
-    static let pChip = parley(0xF1EFEA, 0x2A2721)   // ⌘K chip
+    // Surfaces (cool neutral, dark-first)
+    static let pDesk = parley(0xE8EBEA, 0x080D0C)   // behind windows
+    static let pCanvas = parley(0xF7F8F7, 0x0E1615) // window body
+    static let pRail = parley(0xEEF1F0, 0x0A1110)   // sidebar
+    static let pChrome = parley(0xF2F4F3, 0x0E1615) // toolbar / status bar
+    static let pWidget = parley(0xEEF1F0, 0x131D1C) // widget canvas
+    static let pCard = parley(0xFFFFFF, 0x131D1C)   // surface — cards, panels
+    static let pPuck = parley(0xFFFFFF, 0x1B2524)   // floating puck / raised
+    static let pField = parley(0xFFFFFF, 0x0E1615)  // inputs (rest bg)
+    static let pChip = parley(0xF2F4F3, 0x1B2524)   // ⌘K chip
 
     // Lines & controls
-    static let pLine = parley(0xE5E1D9, 0x322E28)   // primary separators
-    static let pLine2 = parley(0xEEEBE4, 0x2A2721)  // inside cards
-    static let pTrackOff = parley(0xD8D4CC, 0x3C382F)
-    static let pControlBorder = parley(0xCFC9BC, 0x4C463D)
-    static let pSelection = parley(0xE9E6E0, 0x2E2A24)
-    static let pButtonBorder = parley(0xDCD8D0, 0x3A362F)
-    static let pWidgetBorder = parley(0xE0DCD4, 0x34302A)   // floating widget / HUD / popover rims
+    static let pLine = parley(0xE1E6E5, 0x253130)   // hairlineStrong — primary separators
+    static let pLine2 = parley(0xE1E6E5, 0x1B2524)  // hairline — inside cards
+    static let pTrackOff = parley(0xB3BCBA, 0x46534F)
+    static let pControlBorder = parley(0xDFE4E3, 0x253130)
+    static let pSelection = parley(0xF2F4F3, 0x1B2524)   // surfaceRaised — active row
+    static let pButtonBorder = parley(0xE1E6E5, 0x253130)
+    static let pWidgetBorder = parley(0xE1E6E5, 0x253130)
 
-    // Accent (≤3 uses per screen) + danger + success
-    static let pAccent = parley(0xB15B3B, 0xB15B3B)
-    static let pOnAccent = parley(0x232120, 0xF4EFEA)       // readable text ON an accent-tinted fill (both themes)
-    static let pDanger = parley(0xC0442E, 0xE0745C)
-    static let pSuccess = Color(nsColor: .systemGreen)
+    // Accent = teal. Red = recording ONLY (never errors/delete in ZVON, but pDanger reuses it for now).
+    static let pAccent = parley(0x009798, 0x00C4C4)
+    static let pOnAccent = parley(0xFFFFFF, 0x04201F)
+    static var pAccentWash: Color { pAccent.opacity(0.13) }   // active-section tint
+    static let pRecording = parley(0xDE3E2D, 0xFF6B57)         // recording status only
+    static let pDanger = parley(0xDE3E2D, 0xFF6B57)
+    static let pSuccess = parley(0x007D7E, 0x00C4C4)           // "granted" — teal, green is not a brand color
+
+    // Floating-widget surfaces (spec: dark bg #101817, muted-teal status, bright text in the mic bubble)
+    static let pWidgetBG = parley(0xFFFFFF, 0x101817)         // widget panel body
+    static let pStatusLocal = parley(0x007D7E, 0x3E9D9D)      // «локально» — muted teal status text
+    static let pMicBubbleText = parley(0x0C1413, 0xDFF7F7)    // text inside the accent mic bubble
 }
 
 // MARK: - Typography (system font; max 5 sizes)
 
-enum PFont {
-    /// Meeting document title — once per screen.
-    static let title = Font.system(size: 26, weight: .semibold)
-    /// Section headings / settings category.
-    static let heading = Font.system(size: 18, weight: .semibold)
-    /// Notes body — the primary reading size.
-    static let body = Font.system(size: 15, weight: .regular)
-    /// Secondary: actions, transcript, settings rows, buttons.
-    static let secondary = Font.system(size: 13, weight: .regular)
-    static let secondaryStrong = Font.system(size: 13, weight: .semibold)
-    /// Labels (uppercase, tracked), timestamps, key hints.
-    static let label = Font.system(size: 11, weight: .semibold)
+enum PFont {   // ZVON type scale (SF Pro)
+    static let title = Font.system(size: 21, weight: .semibold)      // titleXL
+    static let heading = Font.system(size: 17, weight: .semibold)    // title/headline
+    static let body = Font.system(size: 14, weight: .regular)        // body
+    static let secondary = Font.system(size: 13.5, weight: .regular) // bodySm
+    static let secondaryStrong = Font.system(size: 13.5, weight: .semibold)
+    static let label = Font.system(size: 11, weight: .medium)        // overline (usually uppercased + tracked)
     static let mono = Font.system(size: 11, weight: .medium, design: .monospaced)
     static let monoSecondary = Font.system(size: 13, weight: .regular, design: .monospaced)
 }
@@ -88,13 +91,13 @@ enum PSpace {
 
 // MARK: - Radius
 
-enum PRadius {
-    static let window: CGFloat = 10
-    static let card: CGFloat = 10
+enum PRadius {   // ZVON radii
+    static let window: CGFloat = 12
+    static let card: CGFloat = 9
     static let widget: CGFloat = 14
-    static let puck: CGFloat = 16
+    static let puck: CGFloat = 17
     static let control: CGFloat = 7
-    static let button: CGFloat = 8
+    static let button: CGFloat = 7
 }
 
 // MARK: - Chrome metrics

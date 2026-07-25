@@ -52,7 +52,7 @@ struct MeetingExport {
             out.append("РАСШИФРОВКА")
             out.append(contentsOf: transcript.map { "\($0.role): \($0.text)" }); out.append("")
         }
-        out.append("— Parley")
+        out.append("— ZVON")
         return out.joined(separator: "\n")
     }
 
@@ -75,7 +75,7 @@ struct MeetingExport {
         if includeTranscript, !transcript.isEmpty {
             out.append("## Расшифровка"); out.append(contentsOf: transcript.map { "**\($0.role):** \($0.text)" }); out.append("")
         }
-        out.append("---"); out.append("*Parley*")
+        out.append("---"); out.append("*ZVON*")
         return out.joined(separator: "\n")
     }
 
@@ -84,7 +84,7 @@ struct MeetingExport {
     private enum Ink {
         static let text = NSColor(srgbRed: 0x23/255, green: 0x21/255, blue: 0x20/255, alpha: 1)
         static let gray = NSColor(srgbRed: 0x6A/255, green: 0x66/255, blue: 0x5E/255, alpha: 1)
-        static let accent = NSColor(srgbRed: 0xB1/255, green: 0x5B/255, blue: 0x3B/255, alpha: 1)
+        static let accent = NSColor(srgbRed: 0x00/255, green: 0x7D/255, blue: 0x7E/255, alpha: 1)
         static let rule = NSColor(srgbRed: 0xE5/255, green: 0xE1/255, blue: 0xD9/255, alpha: 1)
     }
 
@@ -137,7 +137,7 @@ struct MeetingExport {
                 s.append(a)
             }
         }
-        add("Parley", size: 9.5, weight: .medium, color: Ink.gray, kern: 0.5, style: para(20, 0))
+        add("ZVON", size: 9.5, weight: .medium, color: Ink.gray, kern: 0.5, style: para(20, 0))
         return s
     }
 
