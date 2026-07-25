@@ -190,13 +190,29 @@ actor UtteranceTranscriber {
             if inSpeech, !text.isEmpty { onEvent(.interim(text)) }
         case .final(let slice, let startSec):
             let r = await decode(slice)
-            if !r.text.isEmpty {
+            if r.text.isEmpty || Self.isLikelyNoise(r.text, r.confidence) {
+                if !r.text.isEmpty {
+                    DebugLog.log("final DROPPED (noise) conf=\(String(format: "%.2f", r.confidence)): «\(r.text.prefix(24))»")
+                }
+                onEvent(.interim(""))   // clear a stale preview if the final was rejected
+            } else {
                 DebugLog.log("final +\(r.text.count) @\(String(format: "%.1f", startSec))s conf=\(String(format: "%.2f", r.confidence))")
                 onEvent(.final(text: r.text, startSec: startSec, confidence: r.confidence))
-            } else {
-                onEvent(.interim(""))   // clear a stale preview if the final was rejected
             }
         }
+    }
+
+    /// Reject background-noise hallucinations by the ASR's own confidence (mean token softmax, 0.1…1.0).
+    /// CONSERVATIVE so real speech is never lost: hard-drop only very-uncertain text, and short blips only
+    /// when uncertain AND not a common short reply. Doesn't touch the audio → zero effect on real quality.
+    private static let shortWhitelist: Set<String> = [
+        "да", "нет", "ок", "окей", "угу", "ага", "хорошо", "точно", "верно", "понятно",
+        "привет", "пока", "спасибо", "конечно", "именно", "возможно", "супер", "отлично",
+    ]
+    private static func isLikelyNoise(_ text: String, _ confidence: Float) -> Bool {
+        if confidence < 0.25 { return true }                                   // almost certainly garbage
+        if confidence < 0.40, text.count <= 8, !shortWhitelist.contains(text.lowercased()) { return true }  // short uncertain blip
+        return false
     }
 
     private func decode(_ slice: [Float]) async -> (text: String, confidence: Float) {

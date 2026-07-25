@@ -110,10 +110,16 @@ struct MeetingView: View {
 
                 HStack(spacing: 7) {
                     Image(systemName: "magnifyingglass").font(.system(size: 12)).foregroundStyle(Color.pInk3)
-                    TextField("Поиск", text: $search)
+                    // During a live meeting → ask about IT; otherwise → ask across the whole archive.
+                    TextField(store.isRecording ? "Вопрос по встрече" : "Спросить по всем встречам", text: $search)
                         .textFieldStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Color.pInk1)
                         .focused($searchFocused)
-                        .onSubmit { if !search.trimmingCharacters(in: .whitespaces).isEmpty { store.ask(search) } }
+                        .onSubmit {
+                            let q = search.trimmingCharacters(in: .whitespaces)
+                            guard !q.isEmpty else { return }
+                            selectedId = nil; mainView = .meeting; showingSettings = false
+                            store.isRecording ? store.ask(q) : store.askArchive(q)
+                        }
                 }
                 .padding(.horizontal, 10).frame(height: 30)
                 .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -559,6 +565,19 @@ struct MeetingView: View {
                 Text(err).font(PFont.secondary).foregroundStyle(Color.pDanger).fixedSize(horizontal: false, vertical: true)
             } else if let a = store.askAnswer {
                 Text(a).font(PFont.body).lineSpacing(4).foregroundStyle(Color.pInk1).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if store.askAnswer != nil, !store.askSources.isEmpty {
+                Divider().overlay(Color.pLine2).padding(.vertical, 2)
+                Text("Источники").font(PFont.label).foregroundStyle(Color.pInk3)
+                FlowLayout(spacing: 6, lineSpacing: 6) {
+                    ForEach(store.askSources) { s in
+                        Button { selectedId = s.id; mainView = .meeting } label: {
+                            Text(s.title).font(.system(size: 11)).foregroundStyle(Color.pAccent).lineLimit(1)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Color.pAccent.opacity(0.12)).clipShape(Capsule())
+                        }.buttonStyle(.plain)
+                    }
+                }
             }
         }
         .padding(PSpace.m).frame(maxWidth: .infinity, alignment: .leading)

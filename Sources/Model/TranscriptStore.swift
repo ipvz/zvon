@@ -45,6 +45,7 @@ final class TranscriptStore: ObservableObject {
     @Published var askQuestion: String?
     @Published var askAnswer: String?
     @Published var askError: String?
+    @Published var askSources: [SessionRecord] = []   // cited meetings when asking over the whole archive
 
     // Settings → connection test: "" idle · "…" testing · "ok" · else = error message
     @Published var llmTest = ""
@@ -441,6 +442,7 @@ final class TranscriptStore: ObservableObject {
         askQuestion = nil
         askAnswer = nil
         askError = nil
+        askSources = []
         asking = false
     }
 
@@ -452,6 +454,54 @@ final class TranscriptStore: ObservableObject {
                                        glossary: GlossaryStore.shared.promptFragment)
             .runRecipe(instruction: instruction, material: material)
     }
+
+    /// NL question over the WHOLE archive (lightweight: keyword+recency retrieval over stored sessions
+    /// → compact summaries → one offloaded LLM call with citations). No embeddings, no local model.
+    func askArchive(_ question: String) {
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        askQuestion = q; askAnswer = nil; askError = nil; askSources = []
+        let all = SessionStore.shared.sessions
+        guard !all.isEmpty else { askError = "Архив пуст — проведите встречи, чтобы спрашивать по истории."; return }
+
+        let terms = q.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 3 }
+        func score(_ s: SessionRecord) -> Int {
+            let head = (s.title + " " + (s.noteSummary?.joined(separator: " ") ?? "")).lowercased()
+            let body = (s.transcript ?? "").lowercased()
+            return terms.reduce(0) { $0 + (head.contains($1) ? 3 : 0) + (body.contains($1) ? 1 : 0) }
+        }
+        let ranked = all.enumerated().map { (i, s) in (s: s, score: score(s), idx: i) }
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.idx < $1.idx }   // score desc, then newer
+        var chosen = ranked.filter { $0.score > 0 }.prefix(8).map(\.s)
+        if chosen.isEmpty { chosen = Array(all.prefix(6)) }   // no keyword hit → recent meetings
+        askSources = chosen
+
+        let context = chosen.map { s -> String in
+            let head = "[Встреча: \(s.title) · \(Self.archiveDate.string(from: s.date))]"
+            let sum = (s.noteSummary ?? []).map { "• \($0)" }.joined(separator: "\n")
+            return sum.isEmpty ? head + "\n" + String((s.transcript ?? "").prefix(600)) : head + "\n" + sum
+        }.joined(separator: "\n\n")
+
+        asking = true
+        let cfg = llmConfig()
+        Task { [weak self] in
+            do {
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                                                     glossary: GlossaryStore.shared.promptFragment)
+                    .askArchive(question: q, context: context)
+                guard let self else { return }
+                self.askAnswer = answer.isEmpty ? "Пустой ответ модели." : answer
+                self.asking = false
+            } catch {
+                guard let self else { return }
+                self.askError = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+                self.asking = false
+            }
+        }
+    }
+    private static let archiveDate: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMM"; return f
+    }()
 
     // MARK: - Connection test (Settings)
 
