@@ -1,10 +1,117 @@
-<p align="center"><b>English</b>&nbsp;&nbsp;·&nbsp;&nbsp;<a href="README.ru.md">Русский</a></p>
+# ZVON
+
+<p align="center"><sub>🌐 &nbsp;Русский открыт ниже&nbsp; · &nbsp;click “English” to expand the English version — right here, no page jump</sub></p>
+
+<!-- ======================= РУССКИЙ ======================= -->
+<details open>
+<summary><b>🇷🇺&nbsp; Русский</b></summary>
+
+<p align="center">
+  <img src="docs/hero.svg" alt="ZVON" width="760">
+</p>
+
+**Нативный macOS-ассистент для встреч и голосового ввода. Русский язык в приоритете, распознавание — на устройстве.**
+
+ZVON слушает встречу с двух источников сразу — ваш микрофон и системный звук собеседника — и превращает разговор в живой транскрипт, тезисы и задачи. Отдельным горячим клавишем работает push-to-talk диктовка в стиле Wispr Flow: удерживаете клавишу, говорите, отпускаете — текст вставляется прямо в курсор. Речь распознаётся **полностью локально** (Parakeet TDT v3 через FluidAudio, CoreML на Apple Silicon); наружу — к вашему LLM-эндпоинту — уходят только производные тексты, и то лишь если вы его настроите.
+
+<p align="center">
+  <img src="docs/window.svg" alt="Главное окно ZVON — три колонки: сайдбар, записи, деталь встречи" width="940">
+</p>
+
+### ✦ Что это
+
+ZVON — это одно окно и один плавающий виджет, закрывающие весь путь встречи:
+
+- **Запись с ролями** — микрофон помечается как «Вы» (`Speaker.me`), системный звук как «Собеседник» (`Speaker.them`). Роли берутся из источника, а не из нейросетевой диаризации, поэтому разделение на двоих участников **100% точное**.
+- **Живой транскрипт** — распознавание на устройстве, финальные строки + партиалы по каждому спикеру, глобальная временная шкала переживает паузу/возобновление.
+- **✦ Итог** — LLM собирает тезисы, решения и темы (но **не** задачи).
+- **Задачи только по голосу** — задача появляется, только когда вы произнесли триггер; никакой фоновой генерации из саммари.
+- **Диктовка** — глобальный хоткей, вставка в курсор, опциональная AI-причёска текста.
+- **Словарь, рецепты, вопросы по встрече и по всему архиву.**
+
+> Целевой продукт собирается как **`ZVON.app`** (`PRODUCT_NAME=ZVON`), хотя проект и схема XcodeGen называются `Parley`, а bundle id — `com.parley.app`. Marketing version `0.1.0`, минимум macOS `14.0`.
+
+### ✦ Ключевые возможности
+
+| Раздел | Что делает | Настройка (по умолч.) |
+|---|---|---|
+| **Встречи** | Двухисточниковая запись (mic + system audio), роли Вы/Собеседник, live-метр по микрофону (у системного источника уровень не снимается), пауза/возобновление. | `captureMode = .micOnly` |
+| **Диктовка** | Push-to-talk (`.hold`) или `.toggle`, сборка `.me`-финалов, вставка в курсор через `TextInserter`, история 100 сниппетов, счётчик слов за всё время. | hold-режим |
+| **Итог / заметки** | `MeetingNotes`: `summary` (до 15 буллетов), `decisions`, `topics`. Язык транскрипта, `temp 0.15`, `max 1600` токенов, одна ремонтная ретрай-попытка на битый JSON. | `summariesEnabled = on` |
+| **Задачи** | Создаются **только** по произнесённому стему из вашей речи, вопрос с `?` вето, LLM-гейт `parseTask` подтверждает. Кросс-митинговый агрегатор, экспорт в Markdown и Apple Reminders. | `taskExtractionEnabled = on` |
+| **Словарь** | Локальная детерминированная коррекция (точный маппинг вариантов, regex фраз, fuzzy: транслит + Левенштейн ≥ 0.86) + инъекция канонических терминов в LLM-промпт как DATA. | `correctionEnabled = on` |
+| **Рецепты** | Сохранённые prompt-линзы над материалами встречи: Письмо-follow-up, Протокол, Тезисы в Telegram, Черновик ТЗ/PRD, Разбор звонка. Кастомные рецепты, `temp 0.35`. | 5 встроенных |
+| **Вопросы** | `ask()` (⌘K) — строго по текущей встрече, «честно скажи» если ответа нет. `askArchive()` — по всему архиву через keyword+recency (без эмбеддингов), один LLM-вызов с цитированием источника. | — |
+
+**AI-причёска диктовки** (`aiDictationEnabled`, **выключена** по умолчанию): `polishDictation` убирает слова-паразиты, применяет устные самокоррекции и команды удаления, переводит проговорённую пунктуацию в символы, нормализует числа/проценты/деньги/время (`250 000 ₽`, `15 %`, `15:00`). Жёсткий таймаут **6 c** — при срыве возвращается сырой текст, диктовка никогда не виснет.
+
+### ✦ Как это работает
+
+`SpeechPipeline` слушает два аудиопотока — микрофон («Вы») и системный звук («Собеседник»), — нарезает речь на высказывания собственным energy-VAD и распознаёт каждое локально через Parakeet. Слабые по уверенности фразы отсеиваются как шум или чинятся ИИ; итог и задачи собираются поверх чистого транскрипта.
+
+<p align="center">
+  <img src="docs/pipeline.svg" alt="Пайплайн ZVON: два источника → локальное распознавание → чистый транскрипт → итог и задачи" width="960">
+</p>
+
+- **Роли из источника, не из ML** — разделение на двоих участников всегда точное, без диаризации.
+- **Аудио никогда не покидает Mac** — распознаётся на устройстве; наружу уходит только текст, и только если подключён LLM.
+- **Умный, а не тяжёлый** — VAD и шумовой фильтр работают на чистой энергии сигнала; ИИ зовётся точечно, лишь для неуверенных фраз.
+
+### ✦ Приватность и безопасность
+
+- **Распознавание — 100% локально.** Единственный исходящий `URLSession` во всём `Sources/` — это `LLMClient.swift`. Декод-путь Parakeet сетевых вызовов не делает.
+- **Бот в звонок не заходит.** Звук собеседника снимается локально через Core Audio process tap (`isPrivate=true`) в приватном aggregate-девайсе — TCC-разрешение **«System Audio Recording»**, а не Screen Recording.
+- **Наружу уходит только LLM-шаг.** Провайдеры: OpenAI, Anthropic, локальный Ollama, Hugging Face, custom. Поставляется **без** встроенного эндпоинта. Пустой эндпоинт → ничего не покидает устройство.
+- **Ключи — только в Keychain** (`kSecClassGenericPassword`, `kSecAttrAccessibleWhenUnlocked`), не в UserDefaults / plists / БД.
+- **Секрет на проводе только по https/loopback** — ключ не уйдёт открытым текстом на удалённый host.
+- **Защита от prompt-injection всюду.** Ненадёжный контент фенсится тегами `<transcript>` / `<meeting>` / `<archive>` / `<glossary>` как ДАННЫЕ, не инструкции; длина зажата как анти-DoS.
+- **Задачи — только из вашей речи** (`if speaker == .me`), удалённый участник не подсунет задачу.
+- **Ноль телеметрии.** Никаких analytics/sentry/firebase. Продиктованный текст в буфере помечается `ConcealedType + TransientType`, прежний буфер восстанавливается после вставки.
+
+> **Честные оговорки.** ATS полностью открыт (`NSAllowsArbitraryLoads=true`) ради cleartext-HTTP к самохостному LLM. Приложение работает без App Sandbox и без Hardened Runtime (прямая раздача, self-signed `Parley Dev Cert`). При выборе облачного провайдера производный текст встречи уходит на его эндпоинт по https — это единственная граница приватности; аудио не уходит никогда.
+
+### ✦ Стек и архитектура
+
+| Слой | Технология |
+|---|---|
+| UI | SwiftUI + AppKit (`NSPanel`, `NSStatusItem`, композитный menu-bar) |
+| STT | **NVIDIA Parakeet TDT v3** через **FluidAudio** `≥ 0.12.4` (CoreML, мультиязычный вкл. русский, ~200× realtime) |
+| Захват аудио | WhisperKit `AudioProcessor` (микрофон) + Core Audio process tap (система) |
+| Хоткеи | KeyboardShortcuts `≥ 1.9.0` |
+| LLM | актор `LLMClient` — OpenAI-совместимый + Anthropic; таймаут 45 с, ретрай 3× с backoff |
+| Сборка | XcodeGen (`project.yml` → `Parley.xcodeproj`) |
+
+WhisperKit — SPM-зависимость, но **не** живой транскрайбер: рантайм-движок это Parakeet (WhisperKit только захватывает микрофон и даёт опциональный загрузчик Whisper-моделей). Бэкенд вычислений не фиксируется в коде — `AsrManager(config: .default)` оставляет выбор compute-юнита на FluidAudio. Мульти-провайдер `LLMProvider`: `openai · anthropic · local · hf · custom`. Toolchain — 6.2 в language mode 5 (чтобы ослабить strict concurrency).
+
+### ✦ Сборка и запуск
+
+**Требования:** macOS `14.0+` (системный захват собеседника — `14.2+`), Apple Silicon рекомендуется, Xcode + `brew install xcodegen`.
+
+```bash
+# 1. Сгенерировать проект (.xcodeproj в .gitignore)
+xcodegen generate
+
+# 2. Собрать (схема — Parley, продукт — ZVON.app)
+xcodebuild -project Parley.xcodeproj -scheme Parley \
+  -configuration Debug -derivedDataPath .build/dd build
+# → .build/dd/Build/Products/Debug/ZVON.app
+```
+
+Подпись — стабильная self-signed `Parley Dev Cert`, чтобы TCC-гранты не переспрашивались при пересборке. Модель скачивается автоматически при первом использовании (~1,2 ГБ, через HuggingFace-кеш FluidAudio). Первый запуск запрашивает микрофон + Accessibility.
+
+### ✦ Статус и дорожная карта
+
+**Версия `0.1.0`, фаза 0** — прямая раздача, без App Sandbox. Ещё не сделано: ребренд `Parley → ZVON` не доведён (проект/схема/bundle/серт всё ещё `Parley`; `scripts/package-dmg.sh` хардкодит `Parley.app`); метки времени у тезисов Итога не реализованы; легаси-код одно-панельной вёрстки остаётся в `MeetingView`; тест-таргета нет; ATS открыт процессно. История имён — `Parley → Granula → ZVON` — видна в артефактах билдов; текущему `project.yml` соответствует только `ZVON.app`.
+
+</details>
+
+<!-- ======================= ENGLISH ======================= -->
+<details>
+<summary><b>🇬🇧&nbsp; English</b></summary>
 
 <p align="center">
   <img src="docs/hero-en.svg" alt="ZVON" width="760">
 </p>
-
-# ZVON
 
 **A native macOS assistant for meetings and voice input. Russian-first, with recognition that runs on your device.**
 
@@ -14,9 +121,7 @@ ZVON listens to a meeting from two sources at once — your microphone and the s
   <img src="docs/window.svg" alt="ZVON main window — three columns: sidebar, records, meeting detail" width="940">
 </p>
 
----
-
-## ✦ What it is
+### ✦ What it is
 
 ZVON is one window and one floating widget that cover the whole arc of a meeting:
 
@@ -27,31 +132,23 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 - **Dictation** — a global hotkey, insert-at-cursor, optional AI cleanup of the text.
 - **Glossary, recipes, questions about the meeting and across the whole archive.**
 
-> The shipped product builds as **`ZVON.app`** (`PRODUCT_NAME=ZVON`), even though the XcodeGen project and scheme are named `Parley` and the bundle id is `com.parley.app`. The legacy `Parley` name still shows up in paths, comments and identifiers. Marketing version `0.1.0`, minimum macOS `14.0`.
+> The shipped product builds as **`ZVON.app`** (`PRODUCT_NAME=ZVON`), even though the XcodeGen project and scheme are named `Parley` and the bundle id is `com.parley.app`. Marketing version `0.1.0`, minimum macOS `14.0`.
 
----
-
-## ✦ Key features
+### ✦ Key features
 
 | Area | What it does | Setting (default) |
 |---|---|---|
 | **Meetings** | Two-source recording (mic + system audio), You/The-other-side roles, a live level meter on the microphone (the system-audio side reports no energy), pause/resume. | `captureMode = .micOnly` |
 | **Dictation** | Push-to-talk (`.hold`) or `.toggle`, assembles `.me` finals, inserts at cursor via `TextInserter`, 100-snippet history, lifetime word count. | hold mode |
-| **Summary / notes** | `MeetingNotes`: `summary` (up to 15 bullets), `decisions`, `topics` (2–4 words). Transcript language, `temp 0.15`, `max 1600` tokens, one repair retry on malformed JSON. | `summariesEnabled = on` |
-| **Tasks** | Created **only** from a spoken stem (`задач` / `напомн` / `не забуд`) in your own speech, a trailing `?` vetoes it, an LLM `parseTask` gate confirms. Cross-meeting aggregator, export to Markdown and Apple Reminders. | `taskExtractionEnabled = on` |
-| **Glossary** | Local deterministic correction (exact variant map, phrase regex, fuzzy: transliteration + Levenshtein ≥ 0.86) + injection of canonical terms into the LLM prompt as DATA. “Add to glossary” on the fly. | `correctionEnabled`, `llmInjectEnabled = on` |
-| **Recipes** | Saved prompt lenses over the meeting material: follow-up email, minutes, Telegram digest, PRD draft, call review. Custom recipes, `temp 0.35`, markdown. | 5 built-in |
-| **Questions** | `ask()` (⌘K) — strictly about the current meeting (last ~12000 chars), “say so honestly” if there’s no answer. `askArchive()` — across the whole archive via keyword + recency (no embeddings), top-8 sessions, one LLM call that cites its source. | — |
+| **Summary / notes** | `MeetingNotes`: `summary` (up to 15 bullets), `decisions`, `topics`. Transcript language, `temp 0.15`, `max 1600` tokens, one repair retry on malformed JSON. | `summariesEnabled = on` |
+| **Tasks** | Created **only** from a spoken stem in your own speech, a trailing `?` vetoes it, an LLM `parseTask` gate confirms. Cross-meeting aggregator, export to Markdown and Apple Reminders. | `taskExtractionEnabled = on` |
+| **Glossary** | Local deterministic correction (exact variant map, phrase regex, fuzzy: transliteration + Levenshtein ≥ 0.86) + injection of canonical terms into the LLM prompt as DATA. | `correctionEnabled = on` |
+| **Recipes** | Saved prompt lenses over the meeting material: follow-up email, minutes, Telegram digest, PRD draft, call review. Custom recipes, `temp 0.35`. | 5 built-in |
+| **Questions** | `ask()` (⌘K) — strictly about the current meeting, “say so honestly” if there’s no answer. `askArchive()` — across the whole archive via keyword + recency (no embeddings), one LLM call that cites its source. | — |
 
-### Dictation in detail
+**Dictation cleanup** (`aiDictationEnabled`, **off** by default): `polishDictation` removes filler words, applies spoken self-corrections and delete commands, turns spoken punctuation into symbols, normalises numbers/percentages/money/time (`250 000 ₽`, `15 %`, `15:00`). A hard **6 s** timeout — on any stall it returns the raw text, so dictation never hangs.
 
-On key release, all `.me` finals + the tail partial are assembled, cleaned (trim, whitespace collapse, capitalisation), passed through the glossary and inserted at the cursor. With no active text field, the text is auto-copied to the clipboard and shown in a card (8 s).
-
-**Optional AI cleanup** (`aiDictationEnabled`, **off** by default): `polishDictation` removes filler words, applies spoken self-corrections and delete commands, turns spoken punctuation into symbols, normalises numbers/percentages/money/time (`250 000 ₽`, `15 %`, `15:00`), and turns enumerations into numbered lists. A hard **6 s** timeout — on any stall it returns the raw text, so dictation never hangs.
-
----
-
-## ✦ How it works
+### ✦ How it works
 
 `SpeechPipeline` listens to two audio streams — the microphone (“You”) and system audio (“The other side”) — slices speech into utterances with its own energy VAD, and recognises each one locally through Parakeet. Low-confidence lines are dropped as noise or repaired by AI; the summary and tasks are built on top of a clean transcript.
 
@@ -63,50 +160,35 @@ On key release, all `.me` finals + the tail partial are assembled, cleaned (trim
 - **Audio never leaves the Mac** — it’s recognised on-device; only text goes out, and only if an LLM is connected.
 - **Smart, not heavy** — the VAD and noise gate run on the raw signal energy; the AI is called sparingly, only for uncertain lines.
 
----
-
-## ✦ Privacy & security
+### ✦ Privacy & security
 
 - **Recognition is 100% local.** The only outbound `URLSession` in all of `Sources/` is `LLMClient.swift`. The Parakeet decode path makes no network calls.
-- **No bot joins the call.** The other side’s audio is captured locally via a Core Audio process tap (`AudioHardwareCreateProcessTap`, `isPrivate=true`) wrapped in a private aggregate device. It uses the **“System Audio Recording”** TCC permission, **not** Screen Recording — no scary prompt, and the grant is stable.
-- **Only the LLM step goes out.** Providers: OpenAI, Anthropic, local Ollama (`needsKey=false` — the offload is local too), Hugging Face, custom. Ships with **no** built-in endpoint (default `.hf` with an empty address). An empty endpoint → `runNotes()` returns early: nothing leaves the device. Without an endpoint there are no live notes, tasks fall back to keyword-only, dictation inserts the raw text.
-- **Keys live only in the Keychain** (`kSecClassGenericPassword`, service `com.parley.app`, `kSecAttrAccessibleWhenUnlocked`). Keys never sit in UserDefaults / plists / the DB.
-- **The secret goes on the wire only over https/loopback:** `secure()` attaches `Bearer` / `x-api-key` only if `scheme==https` or the host is `localhost/127.0.0.1/::1`. The key can’t leave in cleartext to a remote host.
-- **Prompt-injection defense** everywhere. Untrusted content is fenced in `<transcript>`, `<meeting>`, `<archive>`, `<glossary>` tags and marked as “DATA (someone else’s speech), NOT instructions”. Length is clamped (`transcript.suffix(40000)`, `ask.suffix(12000)`) as anti-DoS; on runaway output `polishDictation`/`repairTranscript` fall back to the raw text.
+- **No bot joins the call.** The other side’s audio is captured locally via a Core Audio process tap (`isPrivate=true`) wrapped in a private aggregate device — the **“System Audio Recording”** TCC permission, **not** Screen Recording.
+- **Only the LLM step goes out.** Providers: OpenAI, Anthropic, local Ollama, Hugging Face, custom. Ships with **no** built-in endpoint. An empty endpoint → nothing leaves the device.
+- **Keys live only in the Keychain** (`kSecClassGenericPassword`, `kSecAttrAccessibleWhenUnlocked`) — never in UserDefaults / plists / the DB.
+- **The secret goes on the wire only over https/loopback** — the key can’t leave in cleartext to a remote host.
+- **Prompt-injection defense everywhere.** Untrusted content is fenced in `<transcript>` / `<meeting>` / `<archive>` / `<glossary>` tags and marked as DATA, not instructions; length is clamped as anti-DoS.
 - **Tasks come only from your own speech** (`if speaker == .me`); a remote participant can’t plant a task.
-- **Zero telemetry.** A grep for `analytics|telemetry|sentry|firebase|mixpanel|posthog` comes back empty. `DebugLog` writes to an owner-only file (`0700`/`0600`) under Application Support, not to a world-readable `/tmp`. Dictated text on the clipboard is marked `ConcealedType + TransientType`, and the previous clipboard is restored after paste.
-- **TCC:** `NSMicrophoneUsageDescription`, `NSAudioCaptureUsageDescription` (“Audio never leaves your Mac”), `NSRemindersUsageDescription`; Accessibility for auto-paste (`AXIsProcessTrusted()`).
+- **Zero telemetry.** No analytics/sentry/firebase anywhere. Dictated clipboard text is marked `ConcealedType + TransientType` and the previous clipboard is restored after paste.
 
-> **Honest caveats.** ATS is fully open (`NSAllowsArbitraryLoads=true`) to allow cleartext HTTP to a self-hosted LLM — this weakens transport for the whole process. The app runs **without App Sandbox and without Hardened Runtime** (direct distribution, self-signed `Parley Dev Cert`). `DebugLog` writes final and dictated text to disk (locally, not synced). When you pick a cloud provider, the derived meeting text goes to its endpoint over https — that is the single privacy boundary; audio never leaves.
+> **Honest caveats.** ATS is fully open (`NSAllowsArbitraryLoads=true`) to allow cleartext HTTP to a self-hosted LLM. The app runs without App Sandbox and without Hardened Runtime (direct distribution, self-signed `Parley Dev Cert`). When you pick a cloud provider, the derived meeting text goes to its endpoint over https — that is the single privacy boundary; audio never leaves.
 
----
-
-## ✦ Stack & architecture
+### ✦ Stack & architecture
 
 | Layer | Technology |
 |---|---|
 | UI | SwiftUI + AppKit (`NSPanel`, `NSStatusItem`, composite menu-bar) |
 | STT | **NVIDIA Parakeet TDT v3** via **FluidAudio** `≥ 0.12.4` (CoreML, multilingual incl. Russian, ~200× realtime) |
 | Audio capture | WhisperKit `AudioProcessor` (microphone) + Core Audio process tap (system) |
-| Hotkeys | KeyboardShortcuts `≥ 1.9.0` (`.dictation`, `.toggleRecording`, `.summarize`) |
-| LLM | the `LLMClient` actor — OpenAI-compatible `POST /chat/completions` + Anthropic `POST /messages`; 45 s timeout, 3× retry with linear backoff on transient/5xx |
+| Hotkeys | KeyboardShortcuts `≥ 1.9.0` |
+| LLM | the `LLMClient` actor — OpenAI-compatible + Anthropic; 45 s timeout, 3× retry with backoff |
 | Build | XcodeGen (`project.yml` → `Parley.xcodeproj`) |
 
-**STT nuance:** WhisperKit is listed as an SPM dependency but is **not** the live transcriber — the runtime engine is Parakeet. WhisperKit’s role: microphone capture (`AudioProcessor`/`LiveAudioSource`; `relativeEnergy` feeds the level meter only — the VAD computes its own RMS from the raw samples) plus an optional catalog/downloader of Whisper-CoreML models in Settings. **Don’t** call the product “Whisper-based.”
+WhisperKit is an SPM dependency but **not** the live transcriber — the runtime engine is Parakeet (WhisperKit only captures the mic and offers an optional Whisper-model downloader). The compute backend isn’t pinned in code: `AsrManager(config: .default)` leaves the compute unit to FluidAudio. Multi-provider `LLMProvider`: `openai · anthropic · local · hf · custom`. Toolchain is the 6.2 toolchain in Swift language mode 5 (to relax strict concurrency).
 
-**The compute backend** for Parakeet is not pinned in code: `ParakeetEngine.load()` uses `AsrManager(config: .default)` and leaves the compute unit (ANE/GPU/CPU) to FluidAudio — the legacy `ComputePreference` argument is ignored.
+### ✦ Build & run
 
-**Multi-provider (`LLMProvider`):** `openai · anthropic · local · hf · custom`. `apiStyle = .anthropic` only for Anthropic, otherwise `.openai`. Default models (literally from code): `gpt-4o-mini` / `claude-sonnet-5` / `llama3.1` / `Qwen/Qwen3.6-35B-A3B-FP8`. `needsKey = true` for all but local. `hf` and `custom` share one legacy Keychain account `llm`.
-
-**Decode order is serialised** via a `tail: Task` chain — a second call waits for the first before touching the shared `AsrManager`, because actor isolation alone isn’t enough: suspending on `await` would let mic + system re-enter and corrupt the shared buffers.
-
-Toolchain: `SWIFT_VERSION = 5.0` literally, but per the `project.yml` comment it’s the **6.2 toolchain in language mode 5** (deliberate, to relax strict concurrency). 34 Swift files under `Sources/`.
-
----
-
-## ✦ Build & run
-
-**Requirements:** macOS `14.0+` (system-audio capture of the other side needs `14.2+`), Apple Silicon recommended, Xcode + `brew install xcodegen`.
+**Requirements:** macOS `14.0+` (system-audio capture needs `14.2+`), Apple Silicon recommended, Xcode + `brew install xcodegen`.
 
 ```bash
 # 1. Generate the project (.xcodeproj is gitignored)
@@ -118,24 +200,10 @@ xcodebuild -project Parley.xcodeproj -scheme Parley \
 # → .build/dd/Build/Products/Debug/ZVON.app
 ```
 
-**Signing:** `CODE_SIGN_STYLE=Manual`, `CODE_SIGN_IDENTITY="Parley Dev Cert"` — a stable self-signed identity in the login keychain, so TCC grants (microphone / system audio) aren’t re-prompted on every rebuild.
+Signing uses a stable self-signed `Parley Dev Cert` so TCC grants aren’t re-prompted on rebuild. The model downloads automatically on first use (~1.2 GB, via FluidAudio’s HuggingFace cache). First launch requests microphone + Accessibility.
 
-**The model downloads automatically on first use** (not at launch, not in onboarding): `AsrModels.downloadAndLoad(version: .v3)` is pulled lazily from `SpeechPipeline` on the first recording/dictation (~1.2 GB, size/URL managed by FluidAudio via the HuggingFace cache).
+### ✦ Status & roadmap
 
-**First launch:** `OnboardingView` (while `!onboardingDone`), `PermissionsManager` requests the microphone and Accessibility. System capture has no public status API — its state isn’t queried. Reminders is requested on demand when you export a task.
+**Version `0.1.0`, phase 0** — direct distribution, no App Sandbox. Not done yet: the `Parley → ZVON` rebrand isn’t finished (project/scheme/bundle/cert are still `Parley`; `scripts/package-dmg.sh` hardcodes `Parley.app`); per-thesis timestamps in the Summary aren’t implemented; legacy single-column code lingers in `MeetingView`; no test target; ATS is open process-wide. The naming history — `Parley → Granula → ZVON` — is visible in the build artifacts; only `ZVON.app` matches the current `project.yml`.
 
----
-
-## ✦ Status & roadmap
-
-**Version `0.1.0`, phase 0** — direct distribution, `LSUIElement=false` (a normal window and a dock icon for debugging), no App Sandbox.
-
-Honestly not done yet / needs attention:
-
-- The `Parley → ZVON` rebrand isn’t finished: project/scheme/bundle names, the cert and entitlements are still `Parley`. `scripts/package-dmg.sh` hardcodes `Parley.app` and will fail on a clean Release build (`ZVON.app`) — needs fixing.
-- Per-thesis timestamps in the Summary (shown in the mockup) aren’t implemented — the notes model has no per-thesis time codes.
-- Legacy single-column layout code lingers dead in `MeetingView`; the sidebar width is hardcoded rather than tokenised.
-- There’s no separate error color (it reuses `pRecording`); there’s no test target.
-- ATS is open process-wide; `DebugLog` writes speech content to disk — fine for dev, needs hardening before distribution beyond development.
-
-The product’s naming history is visible in the build artifacts: `Parley → Granula → ZVON`. Only `ZVON.app` matches the current `project.yml`.
+</details>
