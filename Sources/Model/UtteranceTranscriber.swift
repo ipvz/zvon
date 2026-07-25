@@ -20,10 +20,12 @@ actor UtteranceTranscriber {
         var showInterim: Bool = true
         var interimEvery: Double = 0.6
         var interimMinLen: Float = 0.5
+        var isDictation = false     // push-to-talk: relax min-length/energy gates + flush on key-release
 
         /// Push-to-talk dictation: the key-release ends the utterance, so allow long thinking-pauses
-        /// (≈1.6s) before auto-endpointing — a mid-sentence pause must not split the phrase.
-        static let dictation = Config(endpointSilence: 1.6, maxUtterance: 45)
+        /// (≈1.6s) before auto-endpointing — a mid-sentence pause must not split the phrase. Also
+        /// relaxes the min-length/energy gates so a quick short word («Алло») isn't dropped.
+        static let dictation = Config(endpointSilence: 1.6, minUtterance: 0.15, maxUtterance: 45, isDictation: true)
     }
 
     private enum Job { case interim([Float]); case final([Float], Double) }
@@ -153,7 +155,9 @@ actor UtteranceTranscriber {
         }
 
         let tail = source.snapshotSamples()
-        if inSpeech { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
+        // On key-release / stop, flush the tail. For dictation flush even if the VAD never latched
+        // onset, so a short/quiet word said during the hold isn't lost (push-to-talk boundary = key).
+        if inSpeech || cfg.isDictation { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
         jobCont?.finish()
         await worker.value
         source.stop()
@@ -172,11 +176,21 @@ actor UtteranceTranscriber {
         utteranceStartAbs = max(utteranceStartAbs, endAbs)
 
         let lenSec = Float(endAbs - start) / sr
-        let energyOK = peak > max(0.0045, noiseFloor * 2.0)
-        if lenSec >= cfg.minUtterance, energyOK,
-           let slice = sliceOf(from: start, to: endAbs, window: samples) {
-            jobCont?.yield(.final(slice, Double(start) / Double(sr)))
+        guard lenSec >= cfg.minUtterance, let slice = sliceOf(from: start, to: endAbs, window: samples) else {
+            purgeProcessedAudio(currentWindowCount: samples.count); return
         }
+        // Energy gate. Meetings: strict peak-vs-noise-floor to reject room noise. Dictation: the user
+        // deliberately held the key, so measure the slice directly with a low floor — a quiet short
+        // word still passes; only true silence is dropped.
+        let energyOK: Bool
+        if cfg.isDictation {
+            var sum: Float = 0; for v in slice { sum += v * v }
+            let e = slice.isEmpty ? 0 : (sum / Float(slice.count)).squareRoot()
+            energyOK = e > 0.0025
+        } else {
+            energyOK = peak > max(0.0045, noiseFloor * 2.0)
+        }
+        if energyOK { jobCont?.yield(.final(slice, Double(start) / Double(sr))) }
         purgeProcessedAudio(currentWindowCount: samples.count)
     }
 
@@ -190,7 +204,7 @@ actor UtteranceTranscriber {
             if inSpeech, !text.isEmpty { onEvent(.interim(text)) }
         case .final(let slice, let startSec):
             let r = await decode(slice)
-            if r.text.isEmpty || Self.isLikelyNoise(r.text, r.confidence) {
+            if r.text.isEmpty || Self.isLikelyNoise(r.text, r.confidence, dictation: cfg.isDictation) {
                 if !r.text.isEmpty {
                     DebugLog.log("final DROPPED (noise) conf=\(String(format: "%.2f", r.confidence)): «\(r.text.prefix(24))»")
                 }
@@ -209,11 +223,13 @@ actor UtteranceTranscriber {
         "да", "нет", "ок", "окей", "угу", "ага", "хорошо", "точно", "верно", "понятно",
         "привет", "пока", "спасибо", "конечно", "именно", "возможно", "супер", "отлично",
     ]
-    private static func isLikelyNoise(_ text: String, _ confidence: Float) -> Bool {
+    private static func isLikelyNoise(_ text: String, _ confidence: Float, dictation: Bool = false) -> Bool {
         // Real speech logs at 0.83–0.99, so these floors keep a huge margin — they only catch
         // near-certain garbage and never eat a real word.
         if confidence < 0.20 { return true }
-        if confidence < 0.30, text.count <= 5, !shortWhitelist.contains(text.lowercased()) { return true }
+        // The short-word blip rule guards against ambient meeting noise; in push-to-talk the user
+        // deliberately spoke, so don't drop a short word like «Алло» just because it's brief.
+        if !dictation, confidence < 0.30, text.count <= 5, !shortWhitelist.contains(text.lowercased()) { return true }
         return false
     }
 
@@ -237,7 +253,7 @@ actor UtteranceTranscriber {
     private func sliceOf(from: Int, to: Int, window samples: [Float]) -> [Float]? {
         let lo = max(0, from - windowStartSample)
         let hi = min(samples.count, to - windowStartSample)
-        guard hi - lo > Int(0.2 * sr) else { return nil }
+        guard hi - lo > Int((cfg.isDictation ? 0.1 : 0.2) * sr) else { return nil }
         return Array(samples[lo..<hi])
     }
 

@@ -21,16 +21,46 @@ protocol LiveAudioSource: AnyObject, Sendable {
     func purge(keepingLast keepCount: Int)
 }
 
-/// Live microphone via WhisperKit's `AudioProcessor` — the proven capture path.
+/// Live microphone via WhisperKit's `AudioProcessor`.
+///
+/// CRASH FIX (heap corruption / `POINTER_BEING_FREED_WAS_NOT_ALLOCATED` on stop): WhisperKit appends
+/// to its `audioSamples: ContiguousArray<Float>` on the real-time audio thread (`processBuffer`) with
+/// NO lock. Reading that array from the VAD actor via `Array(processor.audioSamples)` races the
+/// append — a Swift array read while another thread appends can free/realloc the shared backing store
+/// out from under the reader → SIGABRT. Same for `relativeEnergy`.
+///
+/// So we keep our OWN lock-protected buffer, fed by the `startRecordingLive` callback. That callback
+/// is invoked synchronously inside `processBuffer`, on the audio thread, right after the chunk is
+/// appended — so our buffer has a single writer (the audio thread, serialized by the input tap) and
+/// is read by the actor only under the lock. We never touch `processor.audioSamples`/`relativeEnergy`
+/// from any other thread; we bound WhisperKit's own (now unread) buffer via `purgeAudioSamples` inside
+/// the callback, which is safe because it runs on the same thread as the append.
 final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     private let processor: any AudioProcessing
+    private let lock = NSLock()
+    private var buffer: [Float] = []
+    private var energy: [Float] = []            // last ≤16 relative-energy frames for the level meter
+    private static let internalCap = 240_000    // ~15 s @16 kHz — cap WhisperKit's own buffer growth
 
     init(_ processor: any AudioProcessing) {
         self.processor = processor
     }
 
     func start() throws {
-        try processor.startRecordingLive(callback: nil)
+        lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
+        try processor.startRecordingLive { [weak self] chunk in
+            guard let self else { return }
+            // Audio thread, same call that appended `chunk` to the processor's own buffer.
+            self.lock.lock()
+            self.buffer.append(contentsOf: chunk)
+            var s: Float = 0; for v in chunk { s += v * v }
+            let rms = chunk.isEmpty ? 0 : (s / Float(chunk.count)).squareRoot()
+            self.energy.append(min(1, rms * 14))   // rough 0…1 level for the meters
+            if self.energy.count > 16 { self.energy.removeFirst(self.energy.count - 16) }
+            self.lock.unlock()
+            // Keep WhisperKit's internal (unread) buffer from growing all session — safe on this thread.
+            self.processor.purgeAudioSamples(keepingLast: Self.internalCap)
+        }
     }
 
     func stop() {
@@ -38,17 +68,17 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     }
 
     func snapshotSamples() -> [Float] {
-        Array(processor.audioSamples)
+        lock.lock(); defer { lock.unlock() }
+        return buffer
     }
 
     func snapshotEnergy() -> [Float] {
-        // WhisperKit's relativeEnergy is an O(n) map over an array it never trims, so it grows for
-        // the whole session. Only the tail is ever consumed (VAD + meters), so bound it here — this
-        // keeps `levels`/`levelsThem` tiny and every downstream .animation(value:) diff cheap.
-        Array(processor.relativeEnergy.suffix(16))
+        lock.lock(); defer { lock.unlock() }
+        return energy
     }
 
     func purge(keepingLast keepCount: Int) {
-        processor.purgeAudioSamples(keepingLast: keepCount)
+        lock.lock(); defer { lock.unlock() }
+        if keepCount < buffer.count { buffer.removeFirst(buffer.count - keepCount) }
     }
 }

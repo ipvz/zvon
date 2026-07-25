@@ -56,7 +56,14 @@ struct MeetingView: View {
         .ignoresSafeArea()                  // content flush under the (hidden) title bar — no dead band
         .onAppear { store.onAppear() }
         // Any record start (button OR ⌘⇧R hotkey) takes over the live pane, even from a past session.
-        .onChange(of: store.isRecording) { _, rec in if rec { selectedId = nil; mainView = .meeting } }
+        .onChange(of: store.isRecording) { _, rec in
+            // Live recording opens on the Транскрипт tab (the summary fills in over time); when the
+            // recording stops, flip to Итог. The user can switch manually at any point.
+            if rec { selectedId = nil; mainView = .records; detailTab = .transcript }
+            else { detailTab = .summary }
+        }
+        // Selecting a past record shows its Итог first (per spec).
+        .onChange(of: selectedId) { _, id in if id != nil { detailTab = .summary } }
         // "Недавние" in the menu-bar popover asks the main window to open a session.
         .onChange(of: store.pendingOpenSession) { _, id in
             if let id { selectedId = id; mainView = .meeting; showingSettings = false; store.pendingOpenSession = nil }
@@ -99,19 +106,19 @@ struct MeetingView: View {
     private var sidebar: some View {
         VStack(spacing: 0) {
             // (1) Traffic-lights band — the window buttons float here; no app content.
-            Color.clear.frame(height: 44)
-            // (2) Brand (window-handoff §1): full wave (62px) + "ZVON", where ZV=accent, ON=ink
-            // (founders' initials). No tile, no backing, no second word. Centred in the column.
-            HStack(spacing: 11) {
+            Color.clear.frame(height: 38)
+            // (2) Brand (window-handoff §1): full wave + "ZVON", where ZV=accent, ON=ink (founders'
+            // initials). No tile, no backing. Centred; sized to fill the column without dead air.
+            HStack(spacing: 12) {
                 if let wave = Brand.wave(dark: colorScheme == .dark) {
-                    Image(nsImage: wave).resizable().scaledToFit().frame(width: 62)
+                    Image(nsImage: wave).resizable().scaledToFit().frame(width: 72)
                 }
                 (Text("ZV").foregroundColor(.pAccent) + Text("ON").foregroundColor(.pInk1))
-                    .font(.system(size: 23, weight: .semibold))
-                    .tracking(-0.28)   // −0.012em × 23pt
+                    .font(.system(size: 27, weight: .semibold))
+                    .tracking(-0.32)   // −0.012em × 27pt
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 20)
+            .padding(.horizontal, 16).padding(.top, 6).padding(.bottom, 12)
 
             VStack(spacing: 8) {
                 // «Начать запись» — solid accent primary (mockup §2.2: #00C4C4/#04201F, h36, r8) + ⌘⇧R.

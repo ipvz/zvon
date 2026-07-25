@@ -422,7 +422,7 @@ final class DictationHoldController {
     private var held = false
     private var otherKey = false
     private var startWork: DispatchWorkItem?
-    private static let holdDelay = 0.15   // modifier held alone before dictation starts — short so the
+    private static let holdDelay = 0.10   // modifier held alone before dictation starts — short so the
                                           // first word isn't lost; a chord's 2nd key still cancels via otherKeyDown
 
     init(store: TranscriptStore) {
