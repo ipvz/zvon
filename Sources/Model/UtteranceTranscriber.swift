@@ -28,7 +28,7 @@ actor UtteranceTranscriber {
 
     private enum Job { case interim([Float]); case final([Float], Double) }
 
-    private let decodeFn: @Sendable ([Float]) async -> String
+    private let decodeFn: @Sendable ([Float]) async -> (text: String, confidence: Float)
     private let source: LiveAudioSource
     private let onEvent: @Sendable (TranscriptionEvent) -> Void
     private let cfg: Config
@@ -58,7 +58,7 @@ actor UtteranceTranscriber {
     ]
 
     init(
-        decode: @escaping @Sendable ([Float]) async -> String,
+        decode: @escaping @Sendable ([Float]) async -> (text: String, confidence: Float),
         source: LiveAudioSource,
         config: Config = Config(),
         onEvent: @escaping @Sendable (TranscriptionEvent) -> Void
@@ -185,22 +185,23 @@ actor UtteranceTranscriber {
     private func process(_ job: Job) async {
         switch job {
         case .interim(let slice):
-            let text = await decode(slice)
+            let text = await decode(slice).text
             interimInFlight = false
             if inSpeech, !text.isEmpty { onEvent(.interim(text)) }
         case .final(let slice, let startSec):
-            let text = await decode(slice)
-            if !text.isEmpty {
-                DebugLog.log("final +\(text.count) @\(String(format: "%.1f", startSec))s")
-                onEvent(.final(text: text, startSec: startSec))
+            let r = await decode(slice)
+            if !r.text.isEmpty {
+                DebugLog.log("final +\(r.text.count) @\(String(format: "%.1f", startSec))s conf=\(String(format: "%.2f", r.confidence))")
+                onEvent(.final(text: r.text, startSec: startSec, confidence: r.confidence))
             } else {
                 onEvent(.interim(""))   // clear a stale preview if the final was rejected
             }
         }
     }
 
-    private func decode(_ slice: [Float]) async -> String {
-        Self.clean(await decodeFn(slice))
+    private func decode(_ slice: [Float]) async -> (text: String, confidence: Float) {
+        let r = await decodeFn(slice)
+        return (Self.clean(r.text), r.confidence)
     }
 
     private static func clean(_ raw: String) -> String {

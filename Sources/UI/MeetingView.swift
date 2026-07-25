@@ -16,6 +16,7 @@ struct MeetingView: View {
     @State private var showingSettings = false
     @State private var showShare = false
     @State private var shareCopied = false
+    @State private var showRecipes = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -54,6 +55,18 @@ struct MeetingView: View {
         .onChange(of: store.pendingOpenTaskId) { _, id in
             if id != nil { selectedId = nil; mainView = .tasks; showingSettings = false }
         }
+        .sheet(isPresented: $showRecipes) {
+            RecipesSheet(store: store, material: { meetingMaterial() }, onClose: { showRecipes = false })
+        }
+    }
+
+    /// The meeting content fed to a recipe: the structured recap + the transcript.
+    private func meetingMaterial() -> String {
+        let e = currentExport()
+        var m = e.shareText()
+        let tr = e.transcript.map { "\($0.role): \($0.text)" }.joined(separator: "\n")
+        if !tr.isEmpty { m += "\n\nРАСШИФРОВКА:\n" + tr }
+        return m
     }
 
     private var selected: SessionRecord? {
@@ -263,6 +276,9 @@ struct MeetingView: View {
                     .disabled(!store.canRecord)
             }
             if mainView == .meeting {
+                if store.hasTranscript || !store.notes.isEmpty || viewingPast {
+                    toolbarButton(danger: false, label: "Рецепты") { showRecipes = true }
+                }
                 toolbarButton(danger: false, label: "Поделиться") { showShare = true }
                     .popover(isPresented: $showShare, arrowEdge: .bottom) { sharePopover }
             }

@@ -105,6 +105,11 @@ final class TranscriptStore: ObservableObject {
     @Published var aiDictationStyle: DictationStyle {
         didSet { UserDefaults.standard.set(aiDictationStyle.rawValue, forKey: "aiDictationStyle") }
     }
+    // Settings → Речь → «Улучшать транскрипт через ИИ» (confidence-gated GER, offloaded to the LLM).
+    @Published var aiTranscriptRepairEnabled: Bool {
+        didSet { UserDefaults.standard.set(aiTranscriptRepairEnabled, forKey: "aiTranscriptRepairEnabled") }
+    }
+    static let repairConfidence: Float = 0.70   // only finals below this (uncertain) get sent for repair
     @Published var dictationProcessing = false       // AI polish running → HUD shows the «обрабатываю» pill
     @Published var totalDictatedWords: Int {         // lifetime word count (Wispr-style stat)
         didSet { UserDefaults.standard.set(totalDictatedWords, forKey: "totalDictatedWords") }
@@ -143,6 +148,7 @@ final class TranscriptStore: ObservableObject {
         taskExtractionEnabled = d.object(forKey: "taskExtractionEnabled") == nil ? true : d.bool(forKey: "taskExtractionEnabled")
         aiDictationEnabled = d.bool(forKey: "aiDictationEnabled")   // off by default (opt-in, adds a beat of latency)
         aiDictationStyle = DictationStyle(rawValue: d.string(forKey: "aiDictationStyle") ?? "") ?? .plain
+        aiTranscriptRepairEnabled = d.bool(forKey: "aiTranscriptRepairEnabled")   // off by default (opt-in)
         totalDictatedWords = d.integer(forKey: "totalDictatedWords")
         onboardingDone = d.bool(forKey: "onboardingDone")
 
@@ -202,17 +208,21 @@ final class TranscriptStore: ObservableObject {
                                                    speaker: speaker, text: text, isFinal: false, startSec: t)
             }
             rebuildLines()
-        case .final(let text, let startSec):
+        case .final(let text, let startSec, let confidence):
             // Not guarded by isRecording: the last utterance is flushed *after* stop(), and we
             // must not drop it (this is what lost replies on stop, and dictation needs it).
             partials[speaker] = nil
             nextLineId += 1
+            let lineId = nextLineId
             let corrected = GlossaryStore.shared.correct(text)   // local glossary fix on the final
-            finals.append(TranscriptLine(id: nextLineId, speaker: speaker, text: corrected, isFinal: true, startSec: startSec + segmentBaseSec))
+            finals.append(TranscriptLine(id: lineId, speaker: speaker, text: corrected, isFinal: true, startSec: startSec + segmentBaseSec))
             finals.sort { $0.startSec < $1.startSec }
             rebuildLines()
             scheduleNotes()
             if speaker == .me { detectVoiceTask(corrected) }   // only YOUR speech makes tasks — not the other party's
+            // Confidence-gated GER: only send genuinely uncertain finals to the LLM for repair (offloaded,
+            // few calls). Meetings only (dictation has its own cleanup).
+            if aiTranscriptRepairEnabled, !dictating, confidence < Self.repairConfidence { repairFinal(id: lineId, text: corrected) }
         case .ended:
             partials[speaker] = nil
             rebuildLines()
@@ -289,6 +299,25 @@ final class TranscriptStore: ObservableObject {
         var after = String(trimmed[tIdx...]).trimmingCharacters(in: CharacterSet(charactersIn: " :—-,.\t"))
         if after.lowercased().hasPrefix("мне ") { after = String(after.dropFirst(4)).trimmingCharacters(in: .whitespaces) }
         return after.isEmpty ? trimmed : after
+    }
+
+    /// Generative Error Repair for a low-confidence final: the LLM fixes only clear recognition errors
+    /// (offloaded), then we swap the line's text. Strong anti-over-correction in the prompt + a length
+    /// guard so it can't rewrite/hallucinate. Nearby lines give the model context.
+    private func repairFinal(id: UInt64, text: String) {
+        let cfg = llmConfig()
+        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let context = finals.suffix(6).map { "\($0.speaker.title): \($0.text)" }.joined(separator: "\n")
+        Task { [weak self] in
+            guard let fixed = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                       style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                .repairTranscript(text, context: context) else { return }
+            guard let self else { return }
+            let clean = GlossaryStore.shared.correct(fixed)
+            guard !clean.isEmpty, clean != text, let i = self.finals.firstIndex(where: { $0.id == id }) else { return }
+            self.finals[i].text = clean
+            self.rebuildLines()
+        }
     }
 
     private func detectVoiceTask(_ text: String) {
@@ -413,6 +442,15 @@ final class TranscriptStore: ObservableObject {
         askAnswer = nil
         askError = nil
         asking = false
+    }
+
+    /// Run a recipe-lens over the given meeting material → a finished artifact (offloaded to the LLM).
+    func runRecipe(instruction: String, material: String) async throws -> String {
+        let cfg = llmConfig()
+        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { throw LLMError.badURL }
+        return try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                                       glossary: GlossaryStore.shared.promptFragment)
+            .runRecipe(instruction: instruction, material: material)
     }
 
     // MARK: - Connection test (Settings)

@@ -31,14 +31,17 @@ actor ParakeetEngine {
     /// Transcribe a complete utterance (16 kHz mono). Returns "" on failure.
     /// Decodes are serialized through `tail`: a new call waits for the previous one to finish
     /// before touching the shared `AsrManager`, so mic and system streams can't corrupt each other.
-    func decode(_ samples: [Float]) async -> String {
-        guard let manager else { return "" }
+    func decode(_ samples: [Float]) async -> (text: String, confidence: Float) {
+        guard let manager else { return ("", 1) }
         let language = language
         let previous = tail
-        let work = Task<String, Never> {
+        let work = Task<(String, Float), Never> {
             _ = await previous?.value   // wait for the in-flight decode
             var state = TdtDecoderState.make()
-            return (try? await manager.transcribe(samples, decoderState: &state, language: language))?.text ?? ""
+            if let r = try? await manager.transcribe(samples, decoderState: &state, language: language) {
+                return (r.text, r.confidence)   // confidence = mean token softmax prob (0.1…1.0), for GER gating
+            }
+            return ("", 1)
         }
         tail = Task { _ = await work.value }
         return await work.value

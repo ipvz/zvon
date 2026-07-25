@@ -22,7 +22,7 @@ struct TranscriptLine: Identifiable, Equatable, Sendable {
 
 /// What a single-stream `UtteranceTranscriber` emits. The pipeline tags each with a `Speaker`.
 enum TranscriptionEvent: Sendable {
-    case final(text: String, startSec: Double)
+    case final(text: String, startSec: Double, confidence: Float)
     case interim(String)
     case meter([Float])
     case ended
