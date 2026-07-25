@@ -51,123 +51,15 @@ ZVON — это одно окно и один плавающий виджет, �
 
 ## ✦ Как это работает
 
-Живой пайплайн — актор `SpeechPipeline`: один `ParakeetEngine` кормит один-два `UtteranceTranscriber`. Микрофонный поток создаётся всегда (`Speaker.me`), системный — только при `captureSystem` и macOS 14.2+ (`Speaker.them`). Оба живут в `withThrowingTaskGroup`: mic-задача через `try await` (её падение всплывает наружу), system-задача через `try?` (изолирована — сбой системного захвата не убивает микрофон).
-
-```mermaid
-flowchart TD
-    MIC["Микрофон<br/>Speaker.me «Вы»"] --> AP["AudioProcessor<br/>16 kHz mono"]
-    SYS["Системный звук<br/>Speaker.them «Собеседник»<br/>Core Audio process tap 14.2+"] --> RING["AVAudioConverter →<br/>16 kHz mono ring"]
-
-    AP --> VAD["VAD-петля<br/>sleep 40 мс · tick 0.08 с (~12.5 Гц)<br/>собственный RMS, модель не зовётся"]
-    RING --> VAD
-
-    VAD --> THR{"rms > threshold?<br/>max(0.0026, noiseFloor +<br/>0.16·(peakRMS − noiseFloor))"}
-    THR -->|"onset ≥2 тика"| SLICE["Слайс utterance<br/>preRoll 0.30 с<br/>endpoint 0.5 с / диктовка 1.6 с"]
-    THR -->|"тишина"| VAD
-
-    SLICE --> STT["Parakeet TDT v3<br/>FluidAudio · CoreML<br/>свежий TdtDecoderState<br/>→ (text, confidence 0.1–1.0)"]
-
-    STT --> GATE{"isLikelyNoise?"}
-    GATE -->|"conf < 0.20  ·  или<br/>conf < 0.30 & ≤5 симв.<br/>не в whitelist"| DROP["✕ финал отброшен<br/>аудио не тронуто"]
-    GATE -->|"ок"| GLOSS["Локальный словарь<br/>GlossaryStore.correct()"]
-
-    GLOSS --> GER{"aiTranscriptRepairEnabled<br/>& встреча & conf < 0.70?"}
-    GER -->|"да"| REPAIR["LLM GER-ремонт<br/>maxTokens 300 · temp 0.1<br/>только явные ASR-ошибки<br/>±length-guard"]
-    GER -->|"нет"| MERGE
-    REPAIR --> MERGE["Слияние по ролям<br/>Вы / Собеседник<br/>глобальная шкала segmentBaseSec"]
-
-    MERGE --> NOTES["LLM Итог / заметки<br/>debounce 7 с · ≥2 финала<br/>fire если ≥45 с ИЛИ ≥20 финалов"]
-    MERGE --> TASK["Голосовая задача<br/>стем 'задач'/'напомн'/'не забуд' от .me<br/>?-вето → LLM parseTask"]
-```
-
-**Порог энергии (адаптивный):** `peakRMS = max(peakRMS·0.5^dt, rms)` (пик спадает вдвое за секунду); `threshold = max(0.0026, noiseFloor + 0.16·(peakRMS − noiseFloor))`; `noiseFloor` стартует `0.0010`, адаптируется **только в тишине**, зажат `≥ 0.0002`.
-
-**Пресеты конфига:**
-
-| Параметр | Встреча | Диктовка |
-|---|---|---|
-| `tick` | 0.08 с | 0.08 с |
-| `endpointSilence` | 0.5 с | **1.6 с** |
-| `minUtterance` | 0.35 с | 0.35 с |
-| `maxUtterance` | 18 с | **45 с** |
-| `preRoll` | 0.30 с | 0.30 с |
-| onset | ≥2 тика | ≥2 тика |
-
-Диктовка тянет паузы длиннее, потому что фразу завершает отпускание клавиши, а не тишина.
-
-**Confidence** — ровно один float на utterance = среднее softmax-значение по токенам от FluidAudio (`0.1…1.0`). Реальная речь стабильно в диапазоне `0.83–0.99`, поэтому шумовые пороги держат большой запас.
-
----
-
-## ✦ Дизайн-система
-
-Каждый токен — `Color.parley(lightHex, darkHex)` через `NSColor(name:)`, читающий `appearance.bestMatch([.aqua, .darkAqua])`. Палитра **dark-first**, версия v1.0 (была Parley/clay → стала ZVON/teal; имена токенов сохранены, значения перемаппены). Судить по хексу, не по имени.
+`SpeechPipeline` слушает два аудиопотока — микрофон («Вы») и системный звук («Собеседник»), — нарезает речь на высказывания собственным energy-VAD и распознаёт каждое локально через Parakeet. Слабые по уверенности фразы отсеиваются как шум или чинятся ИИ; итог и задачи собираются поверх чистого транскрипта.
 
 <p align="center">
-  <img src="docs/palette.svg" alt="Палитра токенов ZVON" width="620">
+  <img src="docs/pipeline.svg" alt="Пайплайн ZVON: два источника → локальное распознавание → чистый транскрипт → итог и задачи" width="960">
 </p>
 
-### Акцент и статусы
-
-| Токен | Light | Dark | Роль |
-|---|---|---|---|
-| `pAccent` | `#009798` | `#00C4C4` | teal-акцент |
-| `pOnAccent` | `#FFFFFF` | `#04201F` | текст на акценте |
-| `pRecording` | `#DE3E2D` | `#FF6B57` | **только статус записи** |
-| `pDanger` | `#DE3E2D` | `#FF6B57` | тот же красный (`for now`) |
-| `pSuccess` | `#007D7E` | `#00C4C4` | «зелёный — не бренд-цвет» |
-
-> Красный доктринально означает **только запись**. Отдельного error-цвета в палитре нет — `pDanger` переиспользует тот же хекс. Настоящего зелёного тоже нет.
-
-### Текст и поверхности
-
-| Ink | Light / Dark | | Surface | Light / Dark |
-|---|---|---|---|---|
-| `pInk1` | `#0C1413` / `#F2F5F4` | | `pCanvas` | `#F7F8F7` / `#0E1615` |
-| `pInk2` | `#5E6B69` / `#8B9A97` | | `pRail` | `#EEF1F0` / `#0A1110` |
-| `pInk3` | `#8A9694` / `#6C7A78` | | `pCard` | `#FFFFFF` / `#131D1C` |
-
-### Тип, сетка, радиусы
-
-- **Тип-шкала (`PFont`, максимум 5 размеров):** `title` 21 semibold · `heading` 17 semibold · `body` 14 · `secondary` 13.5 · `label` 11 medium (оверлайн, uppercase + tracking) · `mono` 11 monospaced.
-- **Отступы (`PSpace`, строгая сетка 8pt):** `xxs 4 · xs 8 · s 12 · m 16 · l 24 · xl 32 · xxl 40`.
-- **Радиусы (`PRadius`):** `window 12 · card 9 · widget 14 · puck 17 · control 7 · button 7`.
-
-### Трёхколоночное окно
-
-Корневой фрейм `minWidth 1040 / minHeight 640`, скрытый титлбар, `fullSizeContentView`.
-
-| Колонка | Ширина | Фон |
-|---|---|---|
-| Сайдбар | `238` | `pRail`, 1px `pLine` |
-| Записи | `308` | `pCanvas`, 1px `pLine2` |
-| Деталь | остаток | `pCanvas` |
-
-Сайдбар: полоса под светофоры 44pt · вордмарк `ZV`(accent)+`ON`(ink) 23pt semibold, tracking −0.28 · «Начать запись» solid-accent h36 с ⌘⇧R · поиск h32 с ⌘K · навигация Записи/Задачи/Словарь (актив = `pAccent @ 0.14`) · плашка приватности «Распознавание локально / аудио не покидает Mac».
-
-<p align="center">
-  <img src="docs/widget.svg" alt="Плавающий виджет ZVON и капсула диктовки" width="720">
-</p>
-
-### Плавающий виджет — 4 состояния + ошибка
-
-| Состояние | Размер | Что показывает |
-|---|---|---|
-| **1 · Idle puck** | `62×62` | app-icon плитка, `r17 .continuous`, chevron-чип |
-| **2 · Recording puck** | `62×62` | + `pRecording` точка 16×16 с 2.5px кольцом, пульс 1↔0.4 (1.6 с); чип → mono-таймер |
-| **3 · Expanded, recording** | панель `376` | header (точка · «Запись» · таймер · «локально» · collapse), треки Вы/Собеседник (только последняя реплика), footer «Подвести итог» + ⌘M |
-| **4 · Expanded, idle** | панель `376` | «Начать запись» + «Слышу микрофон и звук встречи. Бот в звонок не заходит» |
-| **Error** | `300` | `pDanger` точка + «Микрофон недоступен» + Повторить/Настройки |
-
-Плитки-реплики: **Вы** справа, «МИКРОФОН · ВЫ», fill `pAccent @ 0.16`, 4 `MicBars`; **Собеседник** слева, «ДИНАМИК · СОБЕСЕДНИК», fill `pSelection`, 3 `SpeakingDots`. Обе — `UnevenRoundedRectangle` с 3px хвостовым углом.
-
-### Капсула диктовки (Wispr Flow style)
-
-Осознанно **вне** тема-системы: приватная фиксированная тёмная палитра `PillC` (`bg ≈ #0E1615 @ 95%`, `teal #00C4C4`, `tealBright #4FE0E0`).
-
-- **SpectrogramPill** (говорите): волна-глиф + `PillLevelBars` (7 капсул 3×20, высота от `store.levels`) + «Отпустите, чтобы вставить» + хинт триггер-клавиши.
-- **ProcessingPill** (после отпускания, LLM-причёска): «Причёсываю текст…» в `tealBright`, teal-свип слева-направо (1.1 с).
-- Размеры: pill `420×100`, processing `320×100`, card `424×300`.
+- **Роли из источника, не из ML** — разделение на двоих участников всегда точное, без диаризации.
+- **Аудио никогда не покидает Mac** — распознаётся на устройстве; наружу уходит только текст, и только если подключён LLM.
+- **Умный, а не тяжёлый** — VAD и шумовой фильтр работают на чистой энергии сигнала; ИИ зовётся точечно, лишь для неуверенных фраз.
 
 ---
 
