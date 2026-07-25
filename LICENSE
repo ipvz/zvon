@@ -1,0 +1,38 @@
+ZVON — Proprietary License (All Rights Reserved)
+
+Copyright (c) 2026 Vladislav Zhdanov (Владислав Жданов)
+
+This repository is published for viewing and evaluation only. It is NOT
+open-source software.
+
+You MAY:
+  - view and read the source code in this repository;
+  - fork it within GitHub as permitted by the GitHub Terms of Service.
+
+You MAY NOT, without the prior written permission of the copyright holder:
+  - use, run, deploy, or self-host this software or any part of it, for any
+    purpose, whether personal, educational, or commercial;
+  - copy, reproduce, modify, translate, or create derivative works;
+  - distribute, publish, sublicense, sell, or otherwise make it available;
+  - remove or alter this notice.
+
+No license or right is granted by implication, estoppel, or otherwise, except
+as expressly stated above. All rights not expressly granted are reserved.
+
+TRADEMARKS AND BRAND. "ZVON", the ZVON name, wordmark, wave mark, application
+icon, and all brand assets under docs/brand/ are reserved and are NOT licensed
+under this document. They may not be used, reproduced, or imitated without the
+prior written permission of the copyright holder, including in any fork or
+derivative material.
+
+THIRD-PARTY COMPONENTS. This software depends on third-party open-source
+packages (including, but not limited to, WhisperKit, FluidAudio, and
+KeyboardShortcuts), each distributed under its own license. Those licenses
+govern their respective components, not this one.
+
+NO WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY
+CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH
+THE SOFTWARE OR ITS USE.
+
+For licensing inquiries, contact: vldslv@zhdnv.ru · Telegram @vldslv_zhdnv

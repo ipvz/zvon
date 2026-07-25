@@ -215,3 +215,13 @@ Signing uses a stable self-signed `Parley Dev Cert` so TCC grants aren’t re-pr
 Logo, icon, color, type and all SVG assets — in the [**brand book**](docs/BRANDBOOK.md).
 
 </details>
+
+---
+
+## Лицензия · License
+
+**Source-available — all rights reserved.** © 2026 Владислав Жданов.
+
+Код опубликован **только для просмотра**: использование, копирование, запуск и распространение — лишь с письменного разрешения правообладателя. Имя и логотип **ZVON** зарезервированы. — *Published for viewing only; any use, copying, or distribution requires written permission; the ZVON name and logo are reserved.*
+
+См. [`LICENSE`](LICENSE) · [vldslv@zhdnv.ru](mailto:vldslv@zhdnv.ru) · Telegram [@vldslv_zhdnv](https://t.me/vldslv_zhdnv)
