@@ -32,6 +32,31 @@ struct RecordingDot: View {
     }
 }
 
+// MARK: - Spinner (premium clay comet-arc)
+
+/// A smooth rotating arc with an angular-gradient fade (comet tail) in the accent — replaces the
+/// stock system spinner. Honors reduce-motion.
+struct PSpinner: View {
+    var size: CGFloat = 22
+    var color: Color = .pAccent
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var spinning = false
+    var body: some View {
+        Circle()
+            .trim(from: 0, to: 0.72)
+            .stroke(
+                AngularGradient(gradient: Gradient(colors: [color.opacity(0), color.opacity(0.15), color]),
+                                center: .center),
+                style: StrokeStyle(lineWidth: max(2, size * 0.11), lineCap: .round)
+            )
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(spinning ? 360 : 0))
+            .animation(reduceMotion ? .default : .linear(duration: 0.85).repeatForever(autoreverses: false), value: spinning)
+            .onAppear { spinning = true }
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Labels & rules
 
 struct SectionLabel: View {

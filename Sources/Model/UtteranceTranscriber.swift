@@ -210,8 +210,10 @@ actor UtteranceTranscriber {
         "привет", "пока", "спасибо", "конечно", "именно", "возможно", "супер", "отлично",
     ]
     private static func isLikelyNoise(_ text: String, _ confidence: Float) -> Bool {
-        if confidence < 0.25 { return true }                                   // almost certainly garbage
-        if confidence < 0.40, text.count <= 8, !shortWhitelist.contains(text.lowercased()) { return true }  // short uncertain blip
+        // Real speech logs at 0.83–0.99, so these floors keep a huge margin — they only catch
+        // near-certain garbage and never eat a real word.
+        if confidence < 0.20 { return true }
+        if confidence < 0.30, text.count <= 5, !shortWhitelist.contains(text.lowercased()) { return true }
         return false
     }
 

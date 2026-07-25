@@ -184,18 +184,6 @@ struct ParleySettingsView: View {
                 }
             }
             .onAppear { axTrusted = TextInserter.canAutoPaste }
-            group("Обработка диктовки",
-                  footnote: "Только для диктовки (удержание/переключение) — не для записи встреч. Убирает слова-паразиты и оговорки, чинит пунктуацию через ИИ. Если модель недоступна — текст вставится как есть.") {
-                PRow("Чистить через ИИ", sub: "Нужна настроенная AI-модель") {
-                    ParleyToggle(on: $store.aiDictationEnabled)
-                }
-                if store.aiDictationEnabled {
-                    PDivider()
-                    PRow("Стиль") {
-                        PSegmented(selection: $store.aiDictationStyle, options: DictationStyle.allCases.map { ($0, $0.title) })
-                    }
-                }
-            }
             group("Остальные") {
                 PRow("Начать / остановить запись") { KeyboardShortcuts.Recorder(for: .toggleRecording) }
                 PDivider()
@@ -235,6 +223,18 @@ struct ParleySettingsView: View {
                   footnote: "Неуверенно распознанные фразы отправляются в AI-модель, которая правит только явные ошибки распознавания (имена, термины, похожие по звучанию слова), не меняя смысл. Работает только с подключённой AI-моделью; распознавание остаётся локальным.") {
                 PRow("Исправлять ошибки распознавания", sub: "Только неуверенные фразы — точечно, через выбранную AI-модель") {
                     ParleyToggle(on: $store.aiTranscriptRepairEnabled)
+                }
+            }
+            group("Обработка диктовки",
+                  footnote: "Только для диктовки (удержание/переключение) — не для записи встреч. Убирает слова-паразиты и оговорки, чинит пунктуацию через ИИ. Если модель недоступна — текст вставится как есть.") {
+                PRow("Чистить через ИИ", sub: "Нужна настроенная AI-модель") {
+                    ParleyToggle(on: $store.aiDictationEnabled)
+                }
+                if store.aiDictationEnabled {
+                    PDivider()
+                    PRow("Стиль") {
+                        PSegmented(selection: $store.aiDictationStyle, options: DictationStyle.allCases.map { ($0, $0.title) })
+                    }
                 }
             }
         }
@@ -317,7 +317,7 @@ struct ParleySettingsView: View {
     @ViewBuilder private var connectionStatusInline: some View {
         switch store.llmTest {
         case "": EmptyView()
-        case "…": ProgressView().controlSize(.small)
+        case "…": PSpinner(size: 14)
         case "ok": Label("Подключено", systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
         default: Text(store.llmTest).font(.system(size: 11)).foregroundStyle(Color.pDanger).lineLimit(2).frame(maxWidth: 300)
         }

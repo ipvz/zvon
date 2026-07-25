@@ -398,7 +398,7 @@ struct DictationHUDView: View {
 struct ProcessingPill: View {
     var body: some View {
         HStack(spacing: 9) {
-            ProgressView().controlSize(.small).tint(Color.pAccent)
+            PSpinner(size: 15)
             Text("Обрабатываю…").font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk2)
         }
         .frame(height: 18).padding(.horizontal, 16)

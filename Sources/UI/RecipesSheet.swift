@@ -95,8 +95,8 @@ struct RecipesSheet: View {
     @ViewBuilder private var result: some View {
         VStack(spacing: 0) {
             if running {
-                Spacer(); ProgressView().controlSize(.small)
-                Text("Готовлю «\(selected?.name ?? "")»…").font(PFont.secondary).foregroundStyle(Color.pInk2).padding(.top, 10); Spacer()
+                Spacer(); PSpinner(size: 26)
+                Text("Готовлю «\(selected?.name ?? "")»…").font(PFont.secondary).foregroundStyle(Color.pInk2).padding(.top, 12); Spacer()
             } else if let error {
                 Spacer()
                 EmptyHint(icon: "exclamationmark.triangle", title: "Не получилось", subtitle: error)

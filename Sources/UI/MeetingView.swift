@@ -467,7 +467,7 @@ struct MeetingView: View {
             Spacer()
             Button { store.regenerateNotes() } label: {
                 HStack(spacing: 6) {
-                    if store.notesGenerating { ProgressView().controlSize(.small) }
+                    if store.notesGenerating { PSpinner(size: 14) }
                     else { Text("✦").foregroundStyle(Color.pAccent) }
                     Text(store.notesGenerating ? "Пишу…" : store.notes.isEmpty ? "Подвести итог" : "Обновить итог")
                 }
@@ -560,7 +560,7 @@ struct MeetingView: View {
                 }.buttonStyle(.plain).accessibilityLabel("Закрыть")
             }
             if store.asking {
-                HStack(spacing: PSpace.xs) { ProgressView().controlSize(.small); Text("Parley думает…").font(PFont.secondary).foregroundStyle(Color.pInk3) }
+                HStack(spacing: PSpace.xs) { PSpinner(size: 14); Text("Parley думает…").font(PFont.secondary).foregroundStyle(Color.pInk3) }
             } else if let err = store.askError {
                 Text(err).font(PFont.secondary).foregroundStyle(Color.pDanger).fixedSize(horizontal: false, vertical: true)
             } else if let a = store.askAnswer {
@@ -794,7 +794,7 @@ private struct LoadingLine: View {
             if let p = progress {
                 ProgressView(value: p).tint(Color.pAccent).frame(maxWidth: 320)
             } else {
-                ProgressView().controlSize(.small)
+                PSpinner(size: 24)
             }
         }
     }
