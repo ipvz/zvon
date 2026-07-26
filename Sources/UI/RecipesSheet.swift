@@ -44,13 +44,13 @@ struct RecipesSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("Рецепты").font(PFont.heading).foregroundStyle(Color.pInk1)
-            Text("готовые документы из встречи").font(PFont.secondary).foregroundStyle(Color.pInk3)
+            Text(L("Рецепты", "Recipes")).font(PFont.heading).foregroundStyle(Color.pInk1)
+            Text(L("готовые документы из встречи", "ready-made documents from your meeting")).font(PFont.secondary).foregroundStyle(Color.pInk3)
             Spacer()
             Button { onClose() } label: {
                 Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(Color.pInk2)
                     .frame(width: 28, height: 28).background(Circle().fill(Color.pSelection)).contentShape(Circle())
-            }.buttonStyle(.plain).accessibilityLabel("Закрыть")
+            }.buttonStyle(.plain).accessibilityLabel(L("Закрыть", "Close"))
         }
         .padding(.horizontal, 20).frame(height: 56)
     }
@@ -66,7 +66,7 @@ struct RecipesSheet: View {
             Button { editing = nil; showEditor = true } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "plus").font(.system(size: 12)).foregroundStyle(Color.pAccent)
-                    Text("Свой рецепт").font(PFont.secondary).foregroundStyle(Color.pInk1)
+                    Text(L("Свой рецепт", "Custom recipe")).font(PFont.secondary).foregroundStyle(Color.pInk1)
                     Spacer()
                 }.padding(.horizontal, 12).frame(height: 40).contentShape(Rectangle())
             }.buttonStyle(.plain)
@@ -96,16 +96,16 @@ struct RecipesSheet: View {
         VStack(spacing: 0) {
             if running {
                 Spacer(); PSpinner(size: 26)
-                Text("Готовлю «\(selected?.name ?? "")»…").font(PFont.secondary).foregroundStyle(Color.pInk2).padding(.top, 12); Spacer()
+                Text(L("Готовлю «\(selected?.name ?? "")»…", "Preparing \(selected?.name ?? "")…")).font(PFont.secondary).foregroundStyle(Color.pInk2).padding(.top, 12); Spacer()
             } else if let error {
                 Spacer()
-                EmptyHint(icon: "exclamationmark.triangle", title: "Не получилось", subtitle: error)
-                Button("Повторить") { if let s = selected { run(s) } }.buttonStyle(PBorderedButtonStyle()).padding(.top, 12)
+                EmptyHint(icon: "exclamationmark.triangle", title: L("Не получилось", "That didn't work"), subtitle: error)
+                Button(L("Повторить", "Try again")) { if let s = selected { run(s) } }.buttonStyle(PBorderedButtonStyle()).padding(.top, 12)
                 Spacer()
             } else if output.isEmpty {
                 Spacer()
-                EmptyHint(icon: "wand.and.stars", title: "Выберите рецепт",
-                          subtitle: "Слева — готовые документы из этой встречи. Можно добавить свой.")
+                EmptyHint(icon: "wand.and.stars", title: L("Выберите рецепт", "Choose a recipe"),
+                          subtitle: L("Слева — готовые документы из этой встречи. Можно добавить свой.", "On the left are ready-made documents from this meeting. You can add your own."))
                 Spacer()
             } else {
                 ScrollView {
@@ -115,10 +115,10 @@ struct RecipesSheet: View {
                 }
                 Divider().overlay(Color.pLine2)
                 HStack(spacing: 8) {
-                    actionButton(copied ? "Скопировано ✓" : "Копировать", "doc.on.doc", tint: copied) { copy() }
-                    actionButton("Поделиться", "square.and.arrow.up") { share() }
+                    actionButton(copied ? L("Скопировано ✓", "Copied ✓") : L("Копировать", "Copy"), "doc.on.doc", tint: copied) { copy() }
+                    actionButton(L("Поделиться", "Share"), "square.and.arrow.up") { share() }
                     Spacer()
-                    actionButton("Обновить", "arrow.clockwise") { if let s = selected { run(s) } }
+                    actionButton(L("Обновить", "Regenerate"), "arrow.clockwise") { if let s = selected { run(s) } }
                 }.padding(.horizontal, 16).padding(.vertical, 10)
             }
         }
@@ -181,16 +181,16 @@ private struct RecipeEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(recipe.name.isEmpty ? "Новый рецепт" : "Рецепт").font(PFont.heading).foregroundStyle(Color.pInk1)
+            Text(recipe.name.isEmpty ? L("Новый рецепт", "New recipe") : L("Рецепт", "Recipe")).font(PFont.heading).foregroundStyle(Color.pInk1)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Название").font(PFont.label).foregroundStyle(Color.pInk3)
-                TextField("Напр. «Письмо инвестору»", text: $recipe.name).textFieldStyle(.plain).font(.system(size: 13))
+                Text(L("Название", "Name")).font(PFont.label).foregroundStyle(Color.pInk3)
+                TextField(L("Напр. «Письмо инвестору»", "e.g. Investor update"), text: $recipe.name).textFieldStyle(.plain).font(.system(size: 13))
                     .padding(.horizontal, 10).frame(height: 32).background(Color.pField)
                     .clipShape(RoundedRectangle(cornerRadius: PRadius.control))
                     .overlay(RoundedRectangle(cornerRadius: PRadius.control).strokeBorder(Color.pButtonBorder, lineWidth: 1))
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Инструкция (что сделать из встречи)").font(PFont.label).foregroundStyle(Color.pInk3)
+                Text(L("Инструкция (что сделать из встречи)", "Instruction (what to make from the meeting)")).font(PFont.label).foregroundStyle(Color.pInk3)
                 TextEditor(text: $recipe.prompt).font(.system(size: 13)).foregroundStyle(Color.pInk1)
                     .scrollContentBackground(.hidden).padding(8).frame(height: 140).background(Color.pField)
                     .clipShape(RoundedRectangle(cornerRadius: PRadius.control))
@@ -198,10 +198,10 @@ private struct RecipeEditor: View {
             }
             HStack {
                 if !recipe.builtin, recipe.name.isEmpty == false {
-                    Button { onDelete() } label: { Text("Удалить").foregroundStyle(Color.pDanger) }.buttonStyle(.plain).font(.system(size: 12))
+                    Button { onDelete() } label: { Text(L("Удалить", "Delete")).foregroundStyle(Color.pDanger) }.buttonStyle(.plain).font(.system(size: 12))
                 }
                 Spacer()
-                Button("Сохранить") { onSave(recipe) }.buttonStyle(PPrimaryButtonStyle())
+                Button(L("Сохранить", "Save")) { onSave(recipe) }.buttonStyle(PPrimaryButtonStyle())
             }
         }
         .padding(24).frame(width: 440).background(Color.pCanvas)

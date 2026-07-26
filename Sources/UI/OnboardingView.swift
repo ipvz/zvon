@@ -6,6 +6,7 @@ import AppKit
 struct OnboardingView: View {
     @EnvironmentObject var store: TranscriptStore
     @ObservedObject private var perms = PermissionsManager.shared
+    @ObservedObject private var loc = L11n.shared
     @State private var step = 0
     private let last = 4
 
@@ -39,16 +40,16 @@ struct OnboardingView: View {
     @ViewBuilder private var content: some View {
         switch step {
         case 0: welcome
-        case 1: permStep(icon: "mic.fill", title: "Микрофон",
-                         desc: "Нужен, чтобы записывать вашу речь на встрече и работать диктовке.",
+        case 1: permStep(icon: "mic.fill", title: L("Микрофон", "Microphone"),
+                         desc: L("Нужен, чтобы записывать вашу речь на встрече и работать диктовке.", "Needed to record your voice in meetings and to power dictation."),
                          state: perms.mic, action: { Task { await perms.requestMic() } },
                          openPane: .microphone)
-        case 2: permStep(icon: "accessibility", title: "Универсальный доступ",
-                         desc: "Чтобы вставлять диктовку в активное поле и запускать её одной клавишей (push-to-talk).",
+        case 2: permStep(icon: "accessibility", title: L("Универсальный доступ", "Accessibility"),
+                         desc: L("Чтобы вставлять диктовку в активное поле и запускать её одной клавишей (push-to-talk).", "To insert dictation into the active field and trigger it with a single key (push-to-talk)."),
                          state: perms.accessibility, action: { perms.requestAccessibility() },
                          openPane: .accessibility)
-        case 3: infoStep(icon: "speaker.wave.2.fill", title: "Звук собеседника",
-                         desc: "Чтобы записывать вторую сторону звонка (Zoom, Meet, телефон). Разрешение запросится автоматически при первой записи звонка — включать заранее не обязательно.")
+        case 3: infoStep(icon: "speaker.wave.2.fill", title: L("Звук собеседника", "Other party's audio"),
+                         desc: L("Чтобы записывать вторую сторону звонка (Zoom, Meet, телефон). Разрешение запросится автоматически при первой записи звонка — включать заранее не обязательно.", "To capture the other side of a call (Zoom, Meet, phone). Permission is requested automatically the first time you record a call — no need to enable it in advance."))
         default: done
         }
     }
@@ -60,15 +61,15 @@ struct OnboardingView: View {
             ParleyMark(heights: [16, 26, 20], color: .pAccent)
                 .frame(width: 60, height: 60)
                 .background(Color.pAccent.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 16))
-            Text("Добро пожаловать в Parley").font(PFont.heading).foregroundStyle(Color.pInk1)
+            Text(L("Добро пожаловать в Parley", "Welcome to Parley")).font(PFont.heading).foregroundStyle(Color.pInk1)
                 .multilineTextAlignment(.center)
-            Text("Локальный ассистент встреч и диктовки. Распознавание и обработка — на вашем Mac, без облака.")
+            Text(L("Локальный ассистент встреч и диктовки. Распознавание и обработка — на вашем Mac, без облака.", "A local assistant for meetings and dictation. Recognition and processing run on your Mac, no cloud."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk2)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
             VStack(alignment: .leading, spacing: 10) {
-                featureLine("waveform", "Запись встреч с расшифровкой и итогом")
-                featureLine("text.bubble", "Диктовка в любое поле с AI-чисткой")
-                featureLine("lock.fill", "Приватность: данные и ключи не покидают устройство")
+                featureLine("waveform", L("Запись встреч с расшифровкой и итогом", "Record meetings with transcript and summary"))
+                featureLine("text.bubble", L("Диктовка в любое поле с AI-чисткой", "Dictate into any field with AI cleanup"))
+                featureLine("lock.fill", L("Приватность: данные и ключи не покидают устройство", "Privacy: your data and keys never leave the device"))
             }
             .padding(.top, 4)
         }
@@ -93,10 +94,10 @@ struct OnboardingView: View {
             if state == .granted {
                 EmptyView()
             } else if state == .denied {
-                Button("Открыть системные настройки") { perms.openSettings(openPane) }
+                Button(L("Открыть системные настройки", "Open System Settings")) { perms.openSettings(openPane) }
                     .buttonStyle(PPrimaryButtonStyle())
             } else {
-                Button("Разрешить") { action() }.buttonStyle(PPrimaryButtonStyle())
+                Button(L("Разрешить", "Allow")) { action() }.buttonStyle(PPrimaryButtonStyle())
             }
         }
     }
@@ -107,7 +108,7 @@ struct OnboardingView: View {
             Text(title).font(PFont.heading).foregroundStyle(Color.pInk1)
             Text(desc).font(PFont.secondary).foregroundStyle(Color.pInk2)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
-            Button("Открыть настройки приватности") { perms.openSettings(.microphone) }
+            Button(L("Открыть настройки приватности", "Open Privacy Settings")) { perms.openSettings(.microphone) }
                 .buttonStyle(PBorderedButtonStyle())
         }
     }
@@ -115,8 +116,8 @@ struct OnboardingView: View {
     private var done: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 44)).foregroundStyle(Color.pAccent)
-            Text("Готово").font(PFont.heading).foregroundStyle(Color.pInk1)
-            Text("Можно записывать встречу или диктовать. Разрешения и провайдера ИИ всегда можно изменить в настройках (⌘,).")
+            Text(L("Готово", "Done")).font(PFont.heading).foregroundStyle(Color.pInk1)
+            Text(L("Можно записывать встречу или диктовать. Разрешения и провайдера ИИ всегда можно изменить в настройках (⌘,).", "You're ready to record a meeting or dictate. Permissions and the AI provider can always be changed in Settings (⌘,)."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk2)
                 .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
         }
@@ -131,9 +132,9 @@ struct OnboardingView: View {
     private func statusPill(_ s: PermState) -> some View {
         let (text, color): (String, Color) = {
             switch s {
-            case .granted: return ("Разрешено", .pSuccess)
-            case .denied:  return ("Отклонено — включите в настройках", .pDanger)
-            default:       return ("Не запрошено", .pInk3)
+            case .granted: return (L("Разрешено", "Granted"), .pSuccess)
+            case .denied:  return (L("Отклонено — включите в настройках", "Denied — enable it in Settings"), .pDanger)
+            default:       return (L("Не запрошено", "Not requested"), .pInk3)
             }
         }()
         return HStack(spacing: 6) {
@@ -149,10 +150,10 @@ struct OnboardingView: View {
     private var footer: some View {
         HStack(spacing: 12) {
             if step == 0 {
-                Button("Пропустить") { finish() }.buttonStyle(.plain)
+                Button(L("Пропустить", "Skip")) { finish() }.buttonStyle(.plain)
                     .font(PFont.secondary).foregroundStyle(Color.pInk3)
             } else {
-                Button("Назад") { withAnimation { step -= 1 } }.buttonStyle(.plain)
+                Button(L("Назад", "Back")) { withAnimation { step -= 1 } }.buttonStyle(.plain)
                     .font(PFont.secondary).foregroundStyle(Color.pInk2)
             }
             Spacer()
@@ -162,7 +163,7 @@ struct OnboardingView: View {
                 }
             }
             Spacer()
-            Button(step == last ? "Начать работу" : "Далее") {
+            Button(step == last ? L("Начать работу", "Get started") : L("Далее", "Next")) {
                 if step == last { finish() } else { withAnimation { step += 1 } }
             }.buttonStyle(PPrimaryButtonStyle())
         }

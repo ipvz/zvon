@@ -5,6 +5,7 @@ import AppKit
 
 struct WidgetRootView: View {
     @ObservedObject var store: TranscriptStore
+    @ObservedObject private var loc = L11n.shared
     var body: some View {
         Group {
             if case .error = store.status, store.isRecording {
@@ -19,8 +20,8 @@ struct WidgetRootView: View {
         .preferredColorScheme(nil)
         // Right-click anywhere on the widget → hide it (also in the menu-bar popover + Settings).
         .contextMenu {
-            Button("Скрыть виджет") { store.widgetHidden = true }
-            Button("Открыть ZVON") {
+            Button(L("Скрыть виджет", "Hide widget")) { store.widgetHidden = true }
+            Button(L("Открыть ZVON", "Open ZVON")) {
                 NSApp.activate(ignoringOtherApps: true)
                 for w in NSApp.windows where w.identifier?.rawValue == "main" { w.makeKeyAndOrderFront(nil) }
             }
@@ -59,7 +60,7 @@ struct PuckView: View {
                                 pressing: { p in if !p { store.stopDictation() } },
                                 perform: { store.startDictation() })
             .onAppear { pulse = true }
-            .accessibilityLabel(store.isRecording ? "Идёт запись" : "ZVON")
+            .accessibilityLabel(store.isRecording ? L("Идёт запись", "Recording") : "ZVON")
     }
 
     // §1: the app-icon tile one-to-one, radius 17, soft shadow.
@@ -128,7 +129,7 @@ struct ExpandedWidget: View {
     private var tracks: some View {
         VStack(alignment: .leading, spacing: 11) {
             if mine == nil && them == nil {
-                Text(meterActive ? "Слушаю разговор…" : "На паузе")
+                Text(meterActive ? L("Слушаю разговор…", "Listening to the conversation…") : L("На паузе", "Paused"))
                     .font(.system(size: 12.5)).foregroundStyle(Color.pInk3)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -146,13 +147,13 @@ struct ExpandedWidget: View {
     // §2 footer: «Подвести итог» (solid accent — stop + open summary), «Заметки», ⌘M hint.
     private var footer: some View {
         HStack(spacing: 10) {
-            Text("Подвести итог")
+            Text(L("Подвести итог", "Summarize"))
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Color.pOnAccent)
                 .padding(.horizontal, 12).frame(height: 28)
                 .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: PRadius.control))
                 .contentShape(Rectangle())
                 .onTapGesture { if store.isRecording { store.stop() }; store.regenerateNotes(); openMain() }
-            Text("Заметки").font(.system(size: 12)).foregroundStyle(Color.pInk2)
+            Text(L("Заметки", "Notes")).font(.system(size: 12)).foregroundStyle(Color.pInk2)
                 .contentShape(Rectangle()).onTapGesture { openMain() }
             Spacer(minLength: 0)
             Text(Hotkeys.mark).font(PFont.mono).foregroundStyle(Color.pInk3)
@@ -163,7 +164,7 @@ struct ExpandedWidget: View {
     // §4: idle expanded — one Start button + the always-on privacy line. No recents, no menu.
     private var idleBody: some View {
         VStack(alignment: .leading, spacing: 11) {
-            Text("Начать запись")
+            Text(L("Начать запись", "Start recording"))
                 .font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.pOnAccent)
                 .frame(maxWidth: .infinity).frame(height: 34)
                 .background(Color.pAccent.opacity(store.canRecord ? 1 : 0.5))
@@ -172,7 +173,7 @@ struct ExpandedWidget: View {
                 .onTapGesture { if store.canRecord { store.start() } }
             HStack(spacing: 9) {
                 Circle().fill(Color.pAccent).frame(width: 6, height: 6)
-                Text("Слышу микрофон и звук встречи. Бот в звонок не заходит")
+                Text(L("Слышу микрофон и звук встречи. Бот в звонок не заходит", "Captures your mic and the meeting audio. No bot joins the call"))
                     .font(.system(size: 11.5)).foregroundStyle(Color.pInk2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -201,7 +202,7 @@ struct TrackRow: View {
         VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
             HStack(spacing: 7) {
                 if mine { MicBars(active: active) }
-                Text(mine ? "МИКРОФОН · ВЫ" : "ДИНАМИК · СОБЕСЕДНИК")
+                Text(mine ? L("МИКРОФОН · ВЫ", "MIC · YOU") : L("ДИНАМИК · СОБЕСЕДНИК", "SPEAKER · THEM"))
                     .font(.system(size: 10)).tracking(0.6)
                     .foregroundStyle(mine ? Color.pStatusLocal : Color.pInk3)
                 if !mine { SpeakingDots(active: active) }
@@ -276,16 +277,16 @@ struct WidgetHeader: View {
         HStack(spacing: 9) {
             if store.isRecording && !store.isPaused {
                 RecordingDot(size: 7)
-                Text("Запись").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                Text(L("Запись", "Recording")).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
                 if let s = store.recordingStartedAt {
                     ElapsedText(since: s, color: .pInk2, font: .system(size: 12, design: .monospaced))
                 }
                 Spacer(minLength: 8)
                 // «локально» — reassures the recording never leaves the Mac (spec §2 header).
-                Text("локально").font(.system(size: 11.5)).foregroundStyle(Color.pStatusLocal)
+                Text(L("локально", "on-device")).font(.system(size: 11.5)).foregroundStyle(Color.pStatusLocal)
             } else if store.isPaused {
                 Circle().fill(Color.pControlBorder).frame(width: 7, height: 7)
-                Text("Пауза").font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                Text(L("Пауза", "Paused")).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pInk1)
                 if let s = store.recordingStartedAt {
                     ElapsedText(since: s, color: .pInk3, font: .system(size: 12, design: .monospaced))
                 }
@@ -311,11 +312,11 @@ struct WidgetHeader: View {
 
     private var idleStatus: String {
         switch store.stage {
-        case .ready, .listening: return "Готово к записи"
-        case .preparing: return "Готовлю модель…"
-        case .downloading(let f): return "Скачиваю \(Int(f * 100))%"
-        case .needsModel: return "Модель не загружена"
-        case .error: return "Ошибка"
+        case .ready, .listening: return L("Готово к записи", "Ready to record")
+        case .preparing: return L("Готовлю модель…", "Preparing model…")
+        case .downloading(let f): return L("Скачиваю \(Int(f * 100))%", "Downloading \(Int(f * 100))%")
+        case .needsModel: return L("Модель не загружена", "Model not loaded")
+        case .error: return L("Ошибка", "Error")
         }
     }
 }
@@ -326,13 +327,13 @@ struct WidgetError: View {
         VStack(alignment: .leading, spacing: PSpace.s) {
             HStack(spacing: PSpace.xs) {
                 Circle().fill(Color.pDanger).frame(width: 8, height: 8)
-                Text("Микрофон недоступен").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
+                Text(L("Микрофон недоступен", "Microphone unavailable")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
             }
-            Text("Запись на паузе. Аудио буферизуется локально, пока устройство не вернётся.")
+            Text(L("Запись на паузе. Аудио буферизуется локально, пока устройство не вернётся.", "Recording paused. Audio is buffered on-device until the device is back."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk2).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: PSpace.s) {
-                Button("Повторить") { store.stop(); store.start() }.buttonStyle(PBorderedButtonStyle())
-                Button("Настройки звука") { NSApp.activate(ignoringOtherApps: true) }.buttonStyle(.plain)
+                Button(L("Повторить", "Retry")) { store.stop(); store.start() }.buttonStyle(PBorderedButtonStyle())
+                Button(L("Настройки звука", "Sound settings")) { NSApp.activate(ignoringOtherApps: true) }.buttonStyle(.plain)
                     .font(PFont.secondary).foregroundStyle(Color.pInk2)
             }
         }
@@ -359,6 +360,7 @@ extension View { func widgetPanel() -> some View { modifier(WidgetPanelChrome())
 /// rapid content updates). The controller sizes the panel per mode from the statics below.
 struct DictationHUDView: View {
     @ObservedObject var store: TranscriptStore
+    @ObservedObject private var loc = L11n.shared
     // Sizes include a margin ≥ the card/pill shadow radius so the shadow is never clipped into a
     // hard-edged rectangle (that clip is the "frame" artifact behind the card).
     static let pillSize = CGSize(width: 420, height: 100)
@@ -376,7 +378,9 @@ struct DictationHUDView: View {
             } else if store.dictationProcessing {
                 ProcessingPill()
             } else if let text = store.dictationCard {
-                if store.dictationCardIsTask {
+                if store.dictationCardIsCommand {
+                    CommandRunCard(store: store, label: text)
+                } else if store.dictationCardIsTask {
                     TaskCreatedCard(store: store, text: text)
                 } else {
                     NoFieldCard(store: store, text: text)
@@ -385,6 +389,58 @@ struct DictationHUDView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(30)
+    }
+}
+
+/// After a spoken command matched a registered action: a brief «выполняю» toast, or — for a command
+/// the user flagged as needing confirmation — a tap-to-run card.
+struct CommandRunCard: View {
+    @ObservedObject var store: TranscriptStore
+    let label: String
+
+    var body: some View {
+        if let cmd = store.pendingCommand { confirm(cmd) } else { toast }
+    }
+
+    private var toast: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "bolt.fill").font(.system(size: 14)).foregroundStyle(Color.pAccent)
+            Text(L("Выполняю", "Running")).font(PFont.secondary).foregroundStyle(Color.pInk2)
+            Text(label).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1).lineLimit(1)
+        }
+        .padding(.horizontal, 16).frame(height: 40)
+        .background(Color.pCard).clipShape(Capsule())
+        .overlay(Capsule().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 6)
+    }
+
+    private func confirm(_ cmd: CommandItem) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "bolt.fill").font(.system(size: 15)).foregroundStyle(Color.pAccent)
+                Text(L("Выполнить команду?", "Run command?")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
+                Spacer()
+            }
+            Text(cmd.phrase.isEmpty ? cmd.value : cmd.phrase).font(PFont.body).foregroundStyle(Color.pInk1).lineLimit(2)
+            Text("\(cmd.kind.title) · \(cmd.value)").font(.system(size: 11.5)).foregroundStyle(Color.pInk3).lineLimit(1)
+            HStack(spacing: 10) {
+                Spacer()
+                Text(L("Отмена", "Cancel")).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk2)
+                    .padding(.horizontal, 14).frame(height: 32)
+                    .background(Color.pChrome).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+                    .contentShape(Rectangle()).onTapGesture { store.dismissDictationCard() }
+                Text(L("Выполнить", "Run")).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                    .padding(.horizontal, 14).frame(height: 32)
+                    .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle()).onTapGesture { store.confirmPendingCommand() }
+            }
+        }
+        .padding(EdgeInsets(top: 16, leading: 18, bottom: 16, trailing: 18))
+        .frame(width: 360, alignment: .leading)
+        .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+        .shadow(color: Color.black.opacity(0.5), radius: 24, x: 0, y: 12)
     }
 }
 
@@ -405,7 +461,7 @@ struct ProcessingPill: View {
     var body: some View {
         HStack(spacing: 11) {
             if let g = Brand.pillGlyph { Image(nsImage: g).resizable().scaledToFit().frame(width: 20, height: 14) }
-            Text("Причёсываю текст…").font(.system(size: 12)).foregroundStyle(PillC.tealBright).fixedSize()
+            Text(L("Причёсываю текст…", "Polishing text…")).font(.system(size: 12)).foregroundStyle(PillC.tealBright).fixedSize()
         }
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background(PillC.bg)
@@ -432,13 +488,13 @@ struct SpectrogramPill: View {
             if let g = Brand.pillGlyph { Image(nsImage: g).resizable().scaledToFit().frame(width: 24, height: 16) }
             PillLevelBars(levels: store.levels, speaking: speaking)
             if speaking {
-                Text("Отпустите, чтобы вставить").font(.system(size: 12.5)).foregroundStyle(PillC.text).fixedSize()
+                Text(L("Отпустите, чтобы вставить", "Release to insert")).font(.system(size: 12.5)).foregroundStyle(PillC.text).fixedSize()
                 Text(store.dictationTrigger.shortHint)
                     .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(PillC.muted).fixedSize()
                     .padding(.leading, 13)
                     .overlay(alignment: .leading) { Rectangle().fill(PillC.divider).frame(width: 1, height: 15) }
             } else {
-                Text("Слушаю…").font(.system(size: 12)).foregroundStyle(PillC.muted).fixedSize()
+                Text(L("Слушаю…", "Listening…")).font(.system(size: 12)).foregroundStyle(PillC.muted).fixedSize()
             }
         }
         .padding(.horizontal, 18).padding(.vertical, 11)
@@ -486,20 +542,20 @@ struct NoFieldCard: View {
                         Capsule().fill(Color.pInk2).frame(width: 2, height: h)
                     }
                 }
-                Text("Сначала выберите поле, затем диктуйте").font(PFont.secondary).foregroundStyle(Color.pInk3)
+                Text(L("Сначала выберите поле, затем диктуйте", "Select a field first, then dictate")).font(PFont.secondary).foregroundStyle(Color.pInk3)
                 Spacer()
                 Button { store.dismissDictationCard() } label: {
                     Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(Color.pInk2)
                         .frame(width: 28, height: 28).background(Circle().fill(Color.pSelection)).contentShape(Circle())
-                }.buttonStyle(.plain).accessibilityLabel("Закрыть")
+                }.buttonStyle(.plain).accessibilityLabel(L("Закрыть", "Close"))
             }
             Text(text).font(PFont.body).lineSpacing(3).foregroundStyle(Color.pInk1)
                 .lineLimit(4).truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                Text("Скопировано · закроется через 8с").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                Text(L("Скопировано · закроется через 8с", "Copied · closes in 8s")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
                 Spacer()
-                HStack(spacing: 7) { Text("⧉").foregroundStyle(Color.pAccent); Text("Скопировать") }
+                HStack(spacing: 7) { Text("⧉").foregroundStyle(Color.pAccent); Text(L("Скопировать", "Copy")) }
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk1)
                     .padding(.horizontal, 16).frame(height: 32)
                     .background(Color.pChrome).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -528,20 +584,20 @@ struct TaskCreatedCard: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 16)).foregroundStyle(Color.pAccent)
-                Text("Задача создана").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
+                Text(L("Задача создана", "Task created")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
                 Spacer()
                 Button { store.dismissDictationCard() } label: {
                     Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(Color.pInk2)
                         .frame(width: 28, height: 28).background(Circle().fill(Color.pSelection)).contentShape(Circle())
-                }.buttonStyle(.plain).accessibilityLabel("Закрыть")
+                }.buttonStyle(.plain).accessibilityLabel(L("Закрыть", "Close"))
             }
             Text(text).font(PFont.body).lineSpacing(3).foregroundStyle(Color.pInk1)
                 .lineLimit(3).truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                Text("Уточняется через ИИ…").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                Text(L("Уточняется через ИИ…", "Refining with AI…")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
                 Spacer()
-                Text("Открыть задачи")
+                Text(L("Открыть задачи", "Open tasks"))
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk1)
                     .padding(.horizontal, 16).frame(height: 32)
                     .background(Color.pChrome).clipShape(RoundedRectangle(cornerRadius: 8))
@@ -567,6 +623,7 @@ struct TaskCreatedCard: View {
 
 struct MenuBarPopover: View {
     @ObservedObject var store: TranscriptStore
+    @ObservedObject private var loc = L11n.shared
     @ObservedObject private var sessions = SessionStore.shared
     var closePopover: () -> Void
 
@@ -578,7 +635,7 @@ struct MenuBarPopover: View {
             VStack(alignment: .leading, spacing: 2) {
                 let recent = Array(sessions.sessions.prefix(3))
                 if !recent.isEmpty {
-                    Text("Недавние").font(PFont.label).tracking(0.5).foregroundStyle(Color.pInk3).padding(.vertical, 4)
+                    Text(L("Недавние", "Recent")).font(PFont.label).tracking(0.5).foregroundStyle(Color.pInk3).padding(.vertical, 4)
                     ForEach(recent) { s in
                         menuRow { store.pendingOpenSession = s.id; openMain(); closePopover() } content: {
                             Text(s.title).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
@@ -588,13 +645,13 @@ struct MenuBarPopover: View {
                     }
                     Hairline(color: .pLine2).padding(.vertical, 4)
                 }
-                popRow("Открыть ZVON", Hotkeys.openNotes) { openMain(); closePopover() }
-                popRow(store.widgetHidden ? "Показать виджет" : "Скрыть виджет", "") {
+                popRow(L("Открыть ZVON", "Open ZVON"), Hotkeys.openNotes) { openMain(); closePopover() }
+                popRow(store.widgetHidden ? L("Показать виджет", "Show widget") : L("Скрыть виджет", "Hide widget"), "") {
                     if store.widgetHidden { FloatingWidgetController.shared?.reveal() } else { store.widgetHidden = true }
                     closePopover()
                 }
-                popRow("Настройки", Hotkeys.settings) { openMain(); store.pendingOpenSettings = true; closePopover() }
-                popRow("Выйти", "⌘Q") { NSApplication.shared.terminate(nil) }
+                popRow(L("Настройки", "Settings"), Hotkeys.settings) { openMain(); store.pendingOpenSettings = true; closePopover() }
+                popRow(L("Выйти", "Quit"), "⌘Q") { NSApplication.shared.terminate(nil) }
             }
         }
         .padding(PSpace.m)
@@ -606,17 +663,17 @@ struct MenuBarPopover: View {
         HStack(spacing: PSpace.xs) {
             if store.isRecording && !store.isPaused {
                 RecordingDot(size: 8)
-                Text("Запись").font(PFont.secondaryStrong)
+                Text(L("Запись", "Recording")).font(PFont.secondaryStrong)
                 Spacer()
                 if let s = store.recordingStartedAt { ElapsedText(since: s, color: .pInk2) }
             } else if store.isPaused {
                 Circle().fill(Color.pControlBorder).frame(width: 8, height: 8)
-                Text("Пауза").font(PFont.secondaryStrong)
+                Text(L("Пауза", "Paused")).font(PFont.secondaryStrong)
                 Spacer()
                 if let s = store.recordingStartedAt { ElapsedText(since: s, color: .pInk3) }
             } else {
                 Circle().fill(Color.pControlBorder).frame(width: 8, height: 8)
-                Text("Готов к записи").font(PFont.secondaryStrong)
+                Text(L("Готов к записи", "Ready to record")).font(PFont.secondaryStrong)
                 Spacer()
                 Text(Hotkeys.record).font(PFont.mono).foregroundStyle(Color.pInk3)
             }
@@ -629,7 +686,7 @@ struct MenuBarPopover: View {
             Button { store.stop(); closePopover() } label: {
                 HStack(spacing: PSpace.xs) {
                     RoundedRectangle(cornerRadius: 2).fill(Color.pDanger).frame(width: 9, height: 9)
-                    Text("Остановить запись")
+                    Text(L("Остановить запись", "Stop recording"))
                 }
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk1)
                 .frame(maxWidth: .infinity).frame(height: 34)
@@ -640,7 +697,7 @@ struct MenuBarPopover: View {
             Button { if store.canRecord { store.start(); closePopover() } } label: {
                 HStack(spacing: PSpace.xs) {
                     Circle().fill(Color.pOnAccent).frame(width: 8, height: 8)
-                    Text("Начать запись")
+                    Text(L("Начать запись", "Start recording"))
                 }
                 .font(PFont.secondaryStrong).foregroundStyle(Color.pOnAccent)
                 .frame(maxWidth: .infinity).frame(height: 34)
@@ -674,7 +731,7 @@ struct MenuBarPopover: View {
     static func relativeShort(_ date: Date) -> String {
         let cal = Calendar.current
         if cal.isDateInToday(date) { return hm.string(from: date) }
-        if cal.isDateInYesterday(date) { return "вчера" }
+        if cal.isDateInYesterday(date) { return L("вчера", "yesterday") }
         if let days = cal.dateComponents([.day], from: date, to: Date()).day, days < 7 { return wd.string(from: date) }
         return md.string(from: date)
     }
@@ -747,6 +804,7 @@ private struct TaskPopRow: View {
 
 struct TasksMenuPopover: View {
     @ObservedObject var store: TranscriptStore
+    @ObservedObject private var loc = L11n.shared
     @ObservedObject private var tasks = TaskStore.shared
     @ObservedObject private var sessions = SessionStore.shared
     var closePopover: () -> Void
@@ -755,7 +813,7 @@ struct TasksMenuPopover: View {
         let open = tasks.open
         VStack(alignment: .leading, spacing: PSpace.s) {
             HStack {
-                Text("Открытые задачи").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
+                Text(L("Открытые задачи", "Open tasks")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
                 Spacer()
                 if !open.isEmpty {
                     Text("\(open.count)").font(PFont.label).foregroundStyle(Color.pInk2)
@@ -765,20 +823,20 @@ struct TasksMenuPopover: View {
             }
             Hairline(color: .pLine2)
             if open.isEmpty {
-                Text("Нет открытых задач").font(PFont.secondary).foregroundStyle(Color.pInk3)
+                Text(L("Нет открытых задач", "No open tasks")).font(PFont.secondary).foregroundStyle(Color.pInk3)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 10)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(open.prefix(8)) { taskRow($0) }
                 }
                 if open.count > 8 {
-                    Text("ещё \(open.count - 8)").font(.system(size: 11)).foregroundStyle(Color.pInk3).padding(.leading, 2)
+                    Text(L("ещё \(open.count - 8)", "\(open.count - 8) more")).font(.system(size: 11)).foregroundStyle(Color.pInk3).padding(.leading, 2)
                 }
             }
             Hairline(color: .pLine2)
             PopRowButton(action: openAll) {
                 HStack(spacing: 0) {
-                    Text("Открыть все задачи").font(PFont.secondary).foregroundStyle(Color.pInk1).fixedSize()
+                    Text(L("Открыть все задачи", "Open all tasks")).font(PFont.secondary).foregroundStyle(Color.pInk1).fixedSize()
                     Spacer(minLength: PSpace.s)
                     Text(Hotkeys.openNotes).font(PFont.mono).foregroundStyle(Color.pInk3)
                 }

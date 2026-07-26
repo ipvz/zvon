@@ -2,14 +2,15 @@ import SwiftUI
 
 /// Which view the main pane shows — switched from the sidebar nav (single window).
 enum MainView: String, CaseIterable, Identifiable {
-    case meeting, records, tasks, gloss
+    case meeting, records, tasks, gloss, commands
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .meeting: return "Встреча"
-        case .records: return "Записи"
-        case .tasks:   return "Задачи"
-        case .gloss:   return "Словарь"
+        case .meeting: return L("Встреча", "Meeting")
+        case .records: return L("Записи", "Records")
+        case .tasks:   return L("Задачи", "Tasks")
+        case .gloss:   return L("Словарь", "Glossary")
+        case .commands: return L("Команды", "Commands")
         }
     }
     var icon: String {
@@ -18,6 +19,7 @@ enum MainView: String, CaseIterable, Identifiable {
         case .records: return "rectangle.stack"
         case .tasks:   return "checklist"
         case .gloss:   return "character.book.closed"
+        case .commands: return "bolt"
         }
     }
 }
@@ -58,9 +60,9 @@ private func initials(_ name: String) -> String {
 
 private func dayLabel(_ date: Date) -> String {
     let cal = Calendar.current
-    if cal.isDateInToday(date) { return "Сегодня" }
-    if cal.isDateInYesterday(date) { return "Вчера" }
-    let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM"
+    if cal.isDateInToday(date) { return L("Сегодня", "Today") }
+    if cal.isDateInYesterday(date) { return L("Вчера", "Yesterday") }
+    let f = DateFormatter(); f.locale = Locale(identifier: _uiLang == .en ? "en_US" : "ru_RU"); f.dateFormat = "d MMMM"
     return f.string(from: date)
 }
 
@@ -109,15 +111,15 @@ struct TasksView: View {
         libraryColumn { (proxy: ScrollViewProxy) in
             let open = tasks.tasks.filter { !$0.done }
             let done = tasks.tasks.filter { $0.done }
-            SectionLabel(text: "Открытые")
-            if open.isEmpty { emptyLine("Задачи появятся из встреч или добавьте вручную.") }
+            SectionLabel(text: L("Открытые", "Open"))
+            if open.isEmpty { emptyLine(L("Задачи появятся из встреч или добавьте вручную.", "Tasks will appear from meetings, or add them manually.")) }
             ForEach(open) { row($0) }
             addTaskRow
             if !done.isEmpty {
                 HStack {
-                    SectionLabel(text: "Завершено")
+                    SectionLabel(text: L("Завершено", "Done"))
                     Spacer()
-                    Button("Очистить") { tasks.clearDone() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                    Button(L("Очистить", "Clear")) { tasks.clearDone() }.buttonStyle(.plain).font(.system(size: 11)).foregroundStyle(Color.pInk3)
                 }.padding(.top, 24)
                 ForEach(done) { row($0) }
             }
@@ -156,16 +158,16 @@ struct TasksView: View {
             if adding {
                 HStack(spacing: 12) {
                     TaskCheck(done: false)
-                    TextField("Новая задача", text: $newText).textFieldStyle(.plain).font(.system(size: 14))
+                    TextField(L("Новая задача", "New task"), text: $newText).textFieldStyle(.plain).font(.system(size: 14))
                         .onSubmit { commitAdd() }
-                    Button("Добавить") { commitAdd() }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color.pAccent)
+                    Button(L("Добавить", "Add")) { commitAdd() }.buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color.pAccent)
                 }
                 .padding(.horizontal, 4).frame(minHeight: 44)
             } else {
                 Button { adding = true } label: {
                     HStack(spacing: 12) {
                         Image(systemName: "plus").font(PFont.secondary).foregroundStyle(Color.pAccent).frame(width: 16)
-                        Text("Добавить задачу").font(PFont.secondary).foregroundStyle(Color.pInk3)
+                        Text(L("Добавить задачу", "Add task")).font(PFont.secondary).foregroundStyle(Color.pInk3)
                     }.padding(.horizontal, 4).frame(minHeight: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
@@ -236,7 +238,7 @@ struct TaskCard: View {
 
     private var detail: some View {
         VStack(alignment: .leading, spacing: 10) {
-            field("Название", $title) { store.edit(task.id) { $0.text = title } }
+            field(L("Название", "Title"), $title) { store.edit(task.id) { $0.text = title } }
 
             // checklist
             ForEach(task.subtasks) { sub in
@@ -249,22 +251,22 @@ struct TaskCard: View {
                     Button { store.edit(task.id) { $0.subtasks.removeAll { $0.id == sub.id } } } label: {
                         Image(systemName: "xmark").font(.system(size: 10)).foregroundStyle(Color.pInk3)
                             .frame(width: 28, height: 28).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityLabel("Удалить подпункт")
+                    }.buttonStyle(.plain).accessibilityLabel(L("Удалить подпункт", "Delete subtask"))
                 }
             }
             HStack(spacing: 10) {
                 Image(systemName: "plus").font(.system(size: 11)).foregroundStyle(Color.pAccent).frame(width: 16)
-                TextField("Подпункт", text: $newSub).textFieldStyle(.plain).font(PFont.secondary).onSubmit { addSub() }
+                TextField(L("Подпункт", "Subtask"), text: $newSub).textFieldStyle(.plain).font(PFont.secondary).onSubmit { addSub() }
             }
 
             HStack(spacing: 10) {
-                field("Исполнитель", $owner) { store.edit(task.id) { $0.owner = owner.isEmpty ? nil : owner } }
-                field("Срок", $due) { store.edit(task.id) { $0.due = due.isEmpty ? nil : due } }
+                field(L("Исполнитель", "Owner"), $owner) { store.edit(task.id) { $0.owner = owner.isEmpty ? nil : owner } }
+                field(L("Срок", "Due"), $due) { store.edit(task.id) { $0.due = due.isEmpty ? nil : due } }
             }
-            field("Заметка", $note) { store.edit(task.id) { $0.notes = note } }
+            field(L("Заметка", "Note"), $note) { store.edit(task.id) { $0.notes = note } }
 
             Button { store.remove(task.id) } label: {
-                HStack(spacing: 6) { Image(systemName: "trash"); Text("Удалить задачу") }
+                HStack(spacing: 6) { Image(systemName: "trash"); Text(L("Удалить задачу", "Delete task")) }
                     .font(.system(size: 12)).foregroundStyle(Color.pDanger)
             }.buttonStyle(.plain).padding(.top, 2)
         }
@@ -293,7 +295,7 @@ struct TaskCard: View {
 enum RecordFilter: String, CaseIterable, Identifiable {
     case all, meeting, dict
     var id: String { rawValue }
-    var title: String { self == .all ? "Все" : self == .meeting ? "Встречи" : "Диктовки" }
+    var title: String { self == .all ? L("Все", "All") : self == .meeting ? L("Встречи", "Meetings") : L("Диктовки", "Dictations") }
     func matches(_ s: SessionRecord) -> Bool {
         switch self { case .all: return true; case .meeting: return s.kind == .meeting; case .dict: return s.kind == .dictation }
     }
@@ -322,8 +324,8 @@ struct RecordsView: View {
                 RecordFilterBar(filter: $filter, counts: counts).padding(.bottom, 16)
             }
             if shown.isEmpty {
-                Text(all.isEmpty && !store.isRecording ? "Пока нет записей."
-                     : filter == .meeting ? "Встреч пока нет." : filter == .dict ? "Диктовок пока нет." : "Пока нет записей.")
+                Text(all.isEmpty && !store.isRecording ? L("Пока нет записей.", "No records yet.")
+                     : filter == .meeting ? L("Встреч пока нет.", "No meetings yet.") : filter == .dict ? L("Диктовок пока нет.", "No dictations yet.") : L("Пока нет записей.", "No records yet."))
                     .font(PFont.secondary).foregroundStyle(Color.pInk3).padding(.vertical, 8)
             }
             ForEach(groupByDay(shown, { $0.date }), id: \.0) { day, items in
@@ -367,11 +369,11 @@ private struct RecordRow: View {
         let t = SessionStore.time.string(from: s.date)
         switch s.kind {
         case .meeting:
-            let d = s.durationSec.map { " · \(Int(($0 / 60).rounded())) мин" } ?? ""
-            return "Встреча · \(t)\(d)"
+            let d = s.durationSec.map { L(" · \(Int(($0 / 60).rounded())) мин", " · \(Int(($0 / 60).rounded())) min") } ?? ""
+            return L("Встреча · \(t)\(d)", "Meeting · \(t)\(d)")
         case .dictation:
             let w = s.title.split { $0 == " " || $0 == "\n" }.count
-            return "Диктовка · \(t) · \(w) слов"
+            return L("Диктовка · \(t) · \(w) слов", "Dictation · \(t) · \(w) words")
         }
     }
 }
@@ -423,7 +425,7 @@ struct RecordFilterBar: View {
 struct TypeBadge: View {
     let meeting: Bool
     var body: some View {
-        Text(meeting ? "встреча" : "диктовка")
+        Text(meeting ? L("встреча", "meeting") : L("диктовка", "dictation"))
             .font(.system(size: 9.5, weight: .medium, design: .monospaced)).tracking(0.3)
             .foregroundStyle(meeting ? Color.pAccent : Color.pInk2)
             .padding(.horizontal, 6).padding(.vertical, 2)
@@ -441,21 +443,21 @@ struct GlossaryView: View {
 
     var body: some View {
         libraryColumn {
-            Text("Правильные написания терминов и имён — и в расшифровке, и в саммари.")
+            Text(L("Правильные написания терминов и имён — и в расшифровке, и в саммари.", "Correct spellings of terms and names — in both the transcript and the summary."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk2).padding(.bottom, 24)
 
-            SectionLabel(text: "Как применять").padding(.bottom, 8)
+            SectionLabel(text: L("Как применять", "How it's applied")).padding(.bottom, 8)
             GlossCard {
-                glossToggleRow("Локальная коррекция (офлайн)",
-                               "Мгновенно правит финалы и диктовки — детерминированно, без сети",
+                glossToggleRow(L("Локальная коррекция (офлайн)", "Local correction (offline)"),
+                               L("Мгновенно правит финалы и диктовки — детерминированно, без сети", "Instantly fixes finals and dictations — deterministic, offline"),
                                $glossary.correctionEnabled)
                 Hairline(color: .pLine2)
-                glossToggleRow("Подставлять в промпт LLM",
-                               "Глоссарий уходит в системный промпт для Итога и вопросов",
+                glossToggleRow(L("Подставлять в промпт LLM", "Add to LLM prompt"),
+                               L("Глоссарий уходит в системный промпт для Итога и вопросов", "The glossary is added to the system prompt for Summary and questions"),
                                $glossary.llmInjectEnabled)
             }
 
-            SectionLabel(text: "Термины · \(glossary.terms.count)").padding(.top, 22).padding(.bottom, 8)
+            SectionLabel(text: L("Термины · \(glossary.terms.count)", "Terms · \(glossary.terms.count)")).padding(.top, 22).padding(.bottom, 8)
             GlossCard {
                 ForEach(Array(glossary.terms.enumerated()), id: \.element.id) { idx, term in
                     if idx > 0 { Hairline(color: .pLine2) }
@@ -465,17 +467,17 @@ struct GlossaryView: View {
                 Button { showAdd = true } label: {
                     HStack(spacing: 10) {
                         Text("+").font(PFont.body).foregroundStyle(Color.pAccent)
-                        Text("Добавить термин").font(PFont.secondary).foregroundStyle(Color.pInk3)
+                        Text(L("Добавить термин", "Add term")).font(PFont.secondary).foregroundStyle(Color.pInk3)
                     }.padding(.horizontal, 16).frame(minHeight: 48).frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 }.buttonStyle(.plain)
             }
 
-            SectionLabel(text: "Обучение на лету").padding(.top, 22).padding(.bottom, 8)
+            SectionLabel(text: L("Обучение на лету", "Learning on the fly")).padding(.top, 22).padding(.bottom, 8)
             GlossCard {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Выдели слово в транскрипте → «Добавить в словарь» — как в Wispr.")
+                    Text(L("Выдели слово в транскрипте → «Добавить в словарь» — как в Wispr.", "Select a word in the transcript → \"Add to glossary\" — like Wispr."))
                         .font(PFont.secondary).foregroundStyle(Color.pInk2)
-                    Text("Услышанное слово попадёт в варианты, каноничное можно поправить.")
+                    Text(L("Услышанное слово попадёт в варианты, каноничное можно поправить.", "The heard word becomes a variant; you can adjust the canonical form."))
                         .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
                 }
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)
@@ -586,22 +588,22 @@ struct GlossaryEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(onDelete == nil ? "Новый термин" : "Термин").font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.pInk1)
+            Text(onDelete == nil ? L("Новый термин", "New term") : L("Термин", "Term")).font(.system(size: 15, weight: .semibold)).foregroundStyle(Color.pInk1)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Каноничное написание").font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                Text(L("Каноничное написание", "Canonical spelling")).font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
                 field($term.canonical, "Kubernetes")
             }
             VStack(alignment: .leading, spacing: 6) {
-                Text("Варианты (через запятую)").font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
-                field($variantsText, "кубернетис, кубернетес")
+                Text(L("Варианты (через запятую)", "Variants (comma-separated)")).font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                field($variantsText, L("кубернетис, кубернетес", "kubernetis, kubernetes"))
             }
             HStack {
                 if let onDelete {
-                    Button("Удалить") { onDelete(); dismiss() }.buttonStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pDanger)
+                    Button(L("Удалить", "Delete")) { onDelete(); dismiss() }.buttonStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pDanger)
                 }
                 Spacer()
-                Button("Отмена") { dismiss() }.buttonStyle(PBorderedButtonStyle())
-                Button("Сохранить") {
+                Button(L("Отмена", "Cancel")) { dismiss() }.buttonStyle(PBorderedButtonStyle())
+                Button(L("Сохранить", "Save")) {
                     term.variants = variantsText.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
                     if !term.canonical.trimmingCharacters(in: .whitespaces).isEmpty { onSave(term) }
                     dismiss()
@@ -617,5 +619,86 @@ struct GlossaryEditor: View {
             .frame(height: 32).padding(.horizontal, 10)
             .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+    }
+}
+
+// MARK: - Команды (voice command registry)
+
+struct CommandsView: View {
+    @ObservedObject private var store = CommandStore.shared
+
+    var body: some View {
+        libraryColumn {
+            Text(L("Скажи во время диктовки «открой почту» / «запусти VPN» — ZVON выполнит команду. «Слово» — это то, что ты произносишь после глагола (открой / запусти / включи / покажи). Сайты открываются в браузере по умолчанию.", "Say \"open mail\" / \"launch VPN\" during dictation — ZVON runs the command. The \"word\" is what you say after the verb (open / launch / turn on / show). Sites open in your default browser."))
+                .font(PFont.secondary).foregroundStyle(Color.pInk3)
+                .fixedSize(horizontal: false, vertical: true).padding(.bottom, 16)
+
+            SectionLabel(text: L("Команды · \(store.commands.count)", "Commands · \(store.commands.count)")).padding(.bottom, 8)
+            ForEach(store.commands) { c in commandRow(c) }
+
+            Button { store.addBlank() } label: {
+                HStack(spacing: 8) { Image(systemName: "plus"); Text(L("Добавить команду", "Add command")) }
+                    .font(PFont.secondary).foregroundStyle(Color.pAccent)
+            }
+            .buttonStyle(.plain).padding(.top, 10)
+        }
+    }
+
+    private func commandRow(_ c: CommandItem) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: c.kind.icon).font(.system(size: 13)).foregroundStyle(Color.pAccent).frame(width: 18)
+                field(L("Слово, напр. «почта»", "Word, e.g. \"mail\""), str(c.id, \.phrase))
+                kindMenu(c)
+                Button { store.remove(c.id) } label: {
+                    Image(systemName: "trash").font(.system(size: 12)).foregroundStyle(Color.pInk3)
+                        .frame(width: 28, height: 28).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+            field(L("Ещё слова через запятую (gmail, мейл)", "More words, comma-separated (gmail, mail)"), aliasStr(c.id))
+            HStack(spacing: 10) {
+                field(c.kind.valueLabel, str(c.id, \.value))
+                Toggle("", isOn: bool(c.id, \.needsConfirm)).labelsHidden().toggleStyle(.switch).controlSize(.small)
+                Text(L("подтв.", "confirm")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+            }
+        }
+        .padding(12)
+        .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.pLine, lineWidth: 1))
+        .padding(.bottom, 10)
+    }
+
+    private func field(_ placeholder: String, _ text: Binding<String>) -> some View {
+        TextField(placeholder, text: text).textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Color.pInk1)
+            .padding(.horizontal, 10).frame(height: 30)
+            .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pLine, lineWidth: 1))
+    }
+
+    private func kindMenu(_ c: CommandItem) -> some View {
+        Menu {
+            ForEach(CommandItem.Kind.allCases) { k in Button(k.title) { store.update(c.id) { $0.kind = k } } }
+        } label: {
+            HStack(spacing: 4) { Text(c.kind.title); Image(systemName: "chevron.down").font(.system(size: 9)) }
+                .font(.system(size: 12)).foregroundStyle(Color.pInk2)
+                .padding(.horizontal, 10).frame(height: 30)
+                .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pLine, lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton).fixedSize()
+    }
+
+    // Bindings that read the live item and write through the store (persist on every edit).
+    private func str(_ id: UUID, _ kp: WritableKeyPath<CommandItem, String>) -> Binding<String> {
+        Binding(get: { store.commands.first { $0.id == id }?[keyPath: kp] ?? "" },
+                set: { v in store.update(id) { $0[keyPath: kp] = v } })
+    }
+    private func bool(_ id: UUID, _ kp: WritableKeyPath<CommandItem, Bool>) -> Binding<Bool> {
+        Binding(get: { store.commands.first { $0.id == id }?[keyPath: kp] ?? false },
+                set: { v in store.update(id) { $0[keyPath: kp] = v } })
+    }
+    private func aliasStr(_ id: UUID) -> Binding<String> {
+        Binding(get: { store.commands.first { $0.id == id }?.aliases.joined(separator: ", ") ?? "" },
+                set: { s in store.update(id) { $0.aliases = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } } })
     }
 }

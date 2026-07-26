@@ -54,6 +54,8 @@ final class TranscriptStore: ObservableObject {
     @Published var isDictating = false          // UI: mic hot for a hold-to-dictate session
     @Published var dictationCard: String?       // "no editable field" card text (auto-copied)
     @Published var dictationCardIsTask = false  // card is a "task created" confirmation, not the copy card
+    @Published var dictationCardIsCommand = false   // card is a "command run" toast
+    @Published var pendingCommand: CommandItem?     // a needsConfirm command awaiting a tap to run
     @Published var dictationHistory: [DictationEntry] = []
     private var dictating = false               // internal: current session is a dictation
     private var cardTask: Task<Void, Never>?
@@ -283,6 +285,27 @@ final class TranscriptStore: ObservableObject {
     func taskCommand(_ text: String) -> String? { Self.remainderAfterStem(text, Self.taskStems + Self.reminderStems) }
     /// Only the explicit «…задач…» form (used as the LLM-down fallback — reminders need the LLM).
     func explicitTaskCommand(_ text: String) -> String? { Self.remainderAfterStem(text, Self.taskStems) }
+
+    /// Voice-command verbs — «открой/запусти/включи …». Keyed on stems so the Russian ASR's many
+    /// spellings all match.
+    private static let commandStems = ["откр", "запус", "вкл", "выкл", "переключ", "покаж",
+                                       "open", "launch", "run", "start"]
+
+    /// A command only fires on a SHORT utterance whose FIRST word is a command verb — so a verb that
+    /// slips into the middle of a longer dictated sentence never triggers an action. Returns the
+    /// target phrase after the verb, or nil (not a command).
+    func commandTarget(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasSuffix("?") else { return nil }
+        let strip = CharacterSet(charactersIn: " ,.:;!?«»\"—-")
+        let words = trimmed.split(whereSeparator: { " \n\t".contains($0) }).map(String.init)
+        guard words.count >= 2, words.count <= 5 else { return nil }        // «открой почту», not a paragraph
+        let first = words[0].lowercased().trimmingCharacters(in: strip)
+        guard Self.commandStems.contains(where: { first.hasPrefix($0) }) else { return nil }   // verb must lead
+        var after = words.dropFirst().joined(separator: " ").trimmingCharacters(in: strip)
+        if after.lowercased().hasPrefix("мне ") { after = String(after.dropFirst(4)).trimmingCharacters(in: .whitespaces) }
+        return after.isEmpty ? nil : after
+    }
 
     private static func remainderAfterStem(_ text: String, _ stems: [String]) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -771,6 +794,14 @@ final class TranscriptStore: ObservableObject {
         guard !text.isEmpty else { DebugLog.log("dictation empty"); return }
         DebugLog.log("dictation final: «\(text)» trigger=\(taskCommand(text) != nil)")
 
+        // Voice command? «открой почту» → run the matching registered command instead of inserting.
+        // Deterministic + local (no LLM in the hot path), only fires on a command verb + a registry hit.
+        if let target = commandTarget(text), let cmd = CommandStore.shared.match(target) {
+            DebugLog.log("dictation → command: «\(cmd.phrase)»")
+            runCommand(cmd)
+            return
+        }
+
         // Possible spoken task command? The LLM decides: a real "создай задачу/напомни мне …" becomes
         // a task; a question or a message that merely contains "напомни" is inserted as normal text.
         let cfg = llmConfig()
@@ -890,6 +921,7 @@ final class TranscriptStore: ObservableObject {
 
     private func showDictationCard(_ text: String) {
         dictationCardIsTask = false
+        dictationCardIsCommand = false
         dictationCard = text
         cardTask?.cancel()
         cardTask = Task { [weak self] in
@@ -900,6 +932,7 @@ final class TranscriptStore: ObservableObject {
 
     private func showTaskCreated(_ text: String) {
         dictationCardIsTask = true
+        dictationCardIsCommand = false
         dictationCard = text
         cardTask?.cancel()
         cardTask = Task { [weak self] in
@@ -908,7 +941,47 @@ final class TranscriptStore: ObservableObject {
         }
     }
 
-    func dismissDictationCard() { cardTask?.cancel(); dictationCard = nil }
+    // MARK: - Voice commands
+
+    /// Run a matched command — immediately for safe/idempotent actions, or show a tap-to-confirm
+    /// card first for anything the user flagged as needing confirmation (VPN, scripts, …).
+    private func runCommand(_ cmd: CommandItem) {
+        if cmd.needsConfirm {
+            pendingCommand = cmd
+            dictationCardIsTask = false
+            dictationCardIsCommand = true
+            dictationCard = cmd.phrase.isEmpty ? cmd.value : cmd.phrase
+            cardTask?.cancel()
+            cardTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 12_000_000_000)   // decision window
+                if !Task.isCancelled { self?.pendingCommand = nil; self?.dictationCard = nil; self?.dictationCardIsCommand = false }
+            }
+        } else {
+            showCommandToast(CommandStore.shared.run(cmd))
+        }
+    }
+
+    /// Tapped "Выполнить" on the confirm card.
+    func confirmPendingCommand() {
+        guard let cmd = pendingCommand else { return }
+        pendingCommand = nil
+        showCommandToast(CommandStore.shared.run(cmd))
+    }
+
+    private func showCommandToast(_ label: String) {
+        dictationCardIsTask = false
+        dictationCardIsCommand = true
+        dictationCard = label
+        cardTask?.cancel()
+        cardTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            if !Task.isCancelled { self?.dictationCard = nil; self?.dictationCardIsCommand = false }
+        }
+    }
+
+    func dismissDictationCard() {
+        cardTask?.cancel(); dictationCard = nil; pendingCommand = nil; dictationCardIsCommand = false
+    }
 
     private func addDictation(_ text: String) {
         dictationHistory.insert(DictationEntry(text: text, date: Date()), at: 0)

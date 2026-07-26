@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct MeetingView: View {
     @EnvironmentObject var store: TranscriptStore
     @EnvironmentObject var models: ModelManager
+    @ObservedObject private var loc = L11n.shared
     @ObservedObject private var sessions = SessionStore.shared
     @ObservedObject private var taskStore = TaskStore.shared
     @ObservedObject private var glossary = GlossaryStore.shared
@@ -43,6 +44,8 @@ struct MeetingView: View {
                         TasksView(store: store).frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else if mainView == .gloss {
                         GlossaryView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
+                    } else if mainView == .commands {
+                        CommandsView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else {
                         recordsColumn             // 308
                         detailColumn              // remainder (min 420)
@@ -126,7 +129,7 @@ struct MeetingView: View {
                     if store.canRecord { selectedId = nil; mainView = .records; store.start() }
                 } label: {
                     HStack(spacing: 8) {
-                        Text("Начать запись").font(.system(size: 13.5, weight: .semibold))
+                        Text(L("Начать запись", "Start recording")).font(.system(size: 13.5, weight: .semibold))
                         Text(Hotkeys.record).font(.system(size: 11.5, design: .monospaced)).opacity(0.6)
                     }
                     .foregroundStyle(Color.pOnAccent)
@@ -140,7 +143,7 @@ struct MeetingView: View {
                 // «Поиск и вопросы» — one field; live meeting → ask about it, else → ask the archive.
                 HStack(spacing: 8) {
                     Circle().strokeBorder(Color.pInk3, lineWidth: 1.5).frame(width: 13, height: 13)
-                    TextField(store.isRecording ? "Вопрос по встрече" : "Поиск и вопросы", text: $search)
+                    TextField(store.isRecording ? L("Вопрос по встрече", "Ask about the meeting") : L("Поиск и вопросы", "Search & ask"), text: $search)
                         .textFieldStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Color.pInk1)
                         .focused($searchFocused)
                         .onSubmit {
@@ -166,7 +169,7 @@ struct MeetingView: View {
             // Privacy plate — always in the sidebar (spec §2.5, §3): the one place the promise shows.
             HStack(spacing: 8) {
                 Circle().fill(Color.pAccent).frame(width: 7, height: 7)
-                Text("Распознавание локально\nаудио не покидает Mac")
+                Text(L("Распознавание локально\nаудио не покидает Mac", "Recognition runs on-device\naudio never leaves your Mac"))
                     .font(.system(size: 11.5)).foregroundStyle(Color.pInk2).lineSpacing(1)
                 Spacer(minLength: 0)
             }
@@ -175,10 +178,28 @@ struct MeetingView: View {
             .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine2, lineWidth: 1))
             .padding(.horizontal, 12).padding(.bottom, 8)
 
+            // Compact interface-language switch — right here in the sidebar, above Settings.
+            HStack(spacing: 3) {
+                ForEach(AppLang.allCases) { l in
+                    let on = loc.lang == l
+                    Text(l == .ru ? "РУ" : "EN")
+                        .font(.system(size: 11, weight: on ? .semibold : .medium))
+                        .foregroundStyle(on ? Color.pAccent : Color.pInk3)
+                        .frame(maxWidth: .infinity).frame(height: 22)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.pAccent.opacity(0.14) : Color.clear))
+                        .contentShape(Rectangle())
+                        .onTapGesture { loc.lang = l }
+                }
+            }
+            .padding(2)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.pField))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine2, lineWidth: 1))
+            .padding(.horizontal, 12).padding(.bottom, 8)
+
             Button { showingSettings = true } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "gearshape").font(.system(size: 13)).foregroundStyle(Color.pInk2).frame(width: 16)
-                    Text("Настройки").font(.system(size: 13)).foregroundStyle(Color.pInk1)
+                    Text(L("Настройки", "Settings")).font(.system(size: 13)).foregroundStyle(Color.pInk1)
                     Spacer()
                     Text("⌘,").font(PFont.mono).foregroundStyle(Color.pInk3)
                 }
@@ -203,7 +224,7 @@ struct MeetingView: View {
 
     private var navSection: some View {
         VStack(spacing: 2) {
-            navRow(.records); navRow(.tasks); navRow(.gloss)
+            navRow(.records); navRow(.tasks); navRow(.commands); navRow(.gloss)
         }
         .padding(.horizontal, 12).padding(.top, 16)
     }
@@ -259,9 +280,9 @@ struct MeetingView: View {
             Color.clear.frame(height: 44)   // align with the traffic-lights band
             VStack(spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("Записи").font(.system(size: 19, weight: .semibold)).foregroundStyle(Color.pInk1)
+                    Text(L("Записи", "Records")).font(.system(size: 19, weight: .semibold)).foregroundStyle(Color.pInk1)
                     Spacer()
-                    Text("\(store.totalDictatedWords.formatted()) слов")
+                    Text(L("\(store.totalDictatedWords.formatted()) слов", "\(store.totalDictatedWords.formatted()) words"))
                         .font(.system(size: 12)).foregroundStyle(Color.pInk3)
                 }
                 RecordFilterBar(filter: $recFilter, counts: counts)
@@ -271,7 +292,7 @@ struct MeetingView: View {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if store.isRecording && recFilter != .dict { recordLiveRow }
                     if groups.isEmpty && !store.isRecording {
-                        Text(search.isEmpty ? "Пока нет записей." : "Ничего не найдено.")
+                        Text(search.isEmpty ? L("Пока нет записей.", "No records yet.") : L("Ничего не найдено.", "Nothing found."))
                             .font(.system(size: 12.5)).foregroundStyle(Color.pInk3).padding(10)
                     }
                     ForEach(groups, id: \.0) { day, items in
@@ -293,11 +314,11 @@ struct MeetingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.pRecording).frame(width: 7, height: 7)
-                    Text(store.notes.topics.first ?? "Новая запись")
+                    Text(store.notes.topics.first ?? L("Новая запись", "New recording"))
                         .font(.system(size: 13.5, weight: .medium)).foregroundStyle(Color.pInk1).lineLimit(1)
                 }
                 HStack(spacing: 4) {
-                    Text(store.isPaused ? "На паузе ·" : "Идёт запись ·").font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                    Text(store.isPaused ? L("На паузе ·", "Paused ·") : L("Идёт запись ·", "Recording ·")).font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
                     if let s = store.recordingStartedAt { ElapsedText(since: s, color: .pInk3, font: .system(size: 11.5, design: .monospaced)) }
                 }
                 .padding(.leading, 15)
@@ -335,11 +356,11 @@ struct MeetingView: View {
         let t = SessionStore.time.string(from: s.date)
         switch s.kind {
         case .meeting:
-            let d = s.durationSec.map { " · \(Int(($0 / 60).rounded())) мин" } ?? ""
-            return "Встреча · \(t)\(d)"
+            let d = s.durationSec.map { L(" · \(Int(($0 / 60).rounded())) мин", " · \(Int(($0 / 60).rounded())) min") } ?? ""
+            return L("Встреча · \(t)\(d)", "Meeting · \(t)\(d)")
         case .dictation:
             let w = s.title.split { $0 == " " || $0 == "\n" }.count
-            return "Диктовка · \(t) · \(w) \(Self.plural(w, "слово", "слова", "слов"))"
+            return L("Диктовка · \(t) · \(w) \(Self.plural(w, "слово", "слова", "слов"))", "Dictation · \(t) · \(w) \(w == 1 ? "word" : "words")")
         }
     }
 
@@ -357,15 +378,15 @@ struct MeetingView: View {
     }
 
     private var detailTitleText: String {
-        if viewingPast, let s = selected { return s.kind == .dictation ? "Диктовка" : s.title }
-        if store.isRecording { return store.notes.topics.first ?? "Идёт запись" }
-        return "Нет выбранной записи"
+        if viewingPast, let s = selected { return s.kind == .dictation ? L("Диктовка", "Dictation") : s.title }
+        if store.isRecording { return store.notes.topics.first ?? L("Идёт запись", "Recording") }
+        return L("Нет выбранной записи", "No record selected")
     }
     private var detailMetaText: String {
         if viewingPast, let s = selected { return s.subtitle }
         let lang = store.language == "auto" ? "RU" : store.language.uppercased()
-        let src = store.captureMode == .micAndSystem ? "2 источника" : "микрофон"
-        return "\(src) · \(lang) · локально"
+        let src = store.captureMode == .micAndSystem ? L("2 источника", "2 sources") : L("микрофон", "microphone")
+        return L("\(src) · \(lang) · локально", "\(src) · \(lang) · local")
     }
 
     private var detailColumn: some View {
@@ -373,8 +394,8 @@ struct MeetingView: View {
             detailHeader
             Hairline(color: .pLine2)
             if !detailHasContent {
-                EmptyStateView(icon: "waveform", title: "Готово к записи",
-                               subtitle: "Нажмите «Начать запись» или выберите запись слева.", action: nil)
+                EmptyStateView(icon: "waveform", title: L("Готово к записи", "Ready to record"),
+                               subtitle: L("Нажмите «Начать запись» или выберите запись слева.", "Press «Start recording» or pick a record on the left."), action: nil)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if detailIsDictation, let s = selected {
                 ScrollView { dictationDetail(s).padding(.horizontal, 30).padding(.vertical, 26) }
@@ -395,10 +416,10 @@ struct MeetingView: View {
                 Text(detailMetaText).font(.system(size: 11.5)).foregroundStyle(Color.pInk3).lineLimit(1)
             }
             Spacer(minLength: 8)
-            if store.isRecording { toolbarButton(danger: true, label: "Стоп") { store.stop() } }
+            if store.isRecording { toolbarButton(danger: true, label: L("Стоп", "Stop")) { store.stop() } }
             if detailHasContent && !detailIsDictation { detailTabControl }
             if detailHasContent {
-                toolbarButton(danger: false, label: "Собрать документ") { showRecipes = true }
+                toolbarButton(danger: false, label: L("Собрать документ", "Build a document")) { showRecipes = true }
             }
         }
         .padding(.horizontal, 20).frame(height: 56)
@@ -407,8 +428,8 @@ struct MeetingView: View {
 
     private var detailTabControl: some View {
         HStack(spacing: 2) {
-            detailTabSeg("Итог", .summary)
-            detailTabSeg("Транскрипт", .transcript)
+            detailTabSeg(L("Итог", "Summary"), .summary)
+            detailTabSeg(L("Транскрипт", "Transcript"), .transcript)
         }
         .padding(2).background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
     }
@@ -446,16 +467,16 @@ struct MeetingView: View {
                 if store.isRecording {
                     HStack(spacing: 8) {
                         Circle().fill(Color.pInk3).frame(width: 6, height: 6)
-                        Text(store.notesGenerating ? "ZVON пишет заметки…" : "Итог появится по ходу встречи")
+                        Text(store.notesGenerating ? L("ZVON пишет заметки…", "ZVON is writing notes…") : L("Итог появится по ходу встречи", "The summary will fill in as you go"))
                             .font(.system(size: 13)).foregroundStyle(Color.pInk3)
                     }
                 } else {
-                    Text("Итога пока нет.").font(.system(size: 13)).foregroundStyle(Color.pInk3)
+                    Text(L("Итога пока нет.", "No summary yet.")).font(.system(size: 13)).foregroundStyle(Color.pInk3)
                 }
             }
-            if !n.summary.isEmpty { sumBlock("ТЕЗИСЫ", n.summary) }
-            if !n.decisions.isEmpty { sumBlock("РЕШЕНИЯ", n.decisions) }
-            if !tasks.isEmpty { taskBlock("ЗАДАЧИ", tasks) }
+            if !n.summary.isEmpty { sumBlock(L("ТЕЗИСЫ", "KEY POINTS"), n.summary) }
+            if !n.decisions.isEmpty { sumBlock(L("РЕШЕНИЯ", "DECISIONS"), n.decisions) }
+            if !tasks.isEmpty { taskBlock(L("ЗАДАЧИ", "TASKS"), tasks) }
         }
     }
 
@@ -506,7 +527,7 @@ struct MeetingView: View {
             return store.lines.map { ($0.speaker.title, $0.text, !$0.isFinal) }
         }()
         if blocks.isEmpty {
-            Text(store.isRecording ? "Слушаю разговор…" : "Транскрипт пуст.")
+            Text(store.isRecording ? L("Слушаю разговор…", "Listening…") : L("Транскрипт пуст.", "Transcript is empty."))
                 .font(.system(size: 13)).foregroundStyle(Color.pInk3)
         } else {
             LazyVStack(alignment: .leading, spacing: 14) {
@@ -520,7 +541,7 @@ struct MeetingView: View {
     private var detailAskFooter: some View {
         HStack(spacing: 12) {
             HStack(spacing: 10) {
-                TextField("Спросить по этой встрече…", text: $detailAsk)
+                TextField(L("Спросить по этой встрече…", "Ask about this meeting…"), text: $detailAsk)
                     .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Color.pInk1)
                     .focused($detailAskFocused)
                     .onSubmit {
@@ -536,7 +557,7 @@ struct MeetingView: View {
             .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 9))
             .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.pLine, lineWidth: 1))
             .focusRing(detailAskFocused, radius: 9)
-            Text("ответ со ссылками на минуты").font(.system(size: 11.5)).foregroundStyle(Color.pInk3).fixedSize()
+            Text(L("ответ со ссылками на минуты", "answers cite the timestamps")).font(.system(size: 11.5)).foregroundStyle(Color.pInk3).fixedSize()
         }
         .padding(.horizontal, 30).padding(.vertical, 14)
     }
@@ -549,7 +570,7 @@ struct MeetingView: View {
                 }
                 let groups = sessions.grouped(filter: .all, search: search)
                 if groups.isEmpty && !store.isRecording {
-                    Text(search.isEmpty ? "Пока нет записей." : "Ничего не найдено.")
+                    Text(search.isEmpty ? L("Пока нет записей.", "No records yet.") : L("Ничего не найдено.", "Nothing found."))
                         .font(.system(size: 12.5)).foregroundStyle(Color.pInk3)
                         .padding(.horizontal, 10).padding(.top, 12)
                 }
@@ -566,7 +587,7 @@ struct MeetingView: View {
 
     private var liveRow: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("СЕГОДНЯ").font(PFont.label).tracking(0.4)
+            Text(L("СЕГОДНЯ", "TODAY")).font(PFont.label).tracking(0.4)
                 .foregroundStyle(Color.pInk3).padding(.leading, 8).padding(.top, 8)
             Button {
                 selectedId = nil; mainView = .meeting
@@ -574,10 +595,10 @@ struct MeetingView: View {
                 HStack(spacing: 6) {
                     Circle().fill(Color.pRecording).frame(width: 6, height: 6)   // live recording = red
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(store.notes.topics.first ?? "Новая запись").font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
+                        Text(store.notes.topics.first ?? L("Новая запись", "New recording")).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
                         if let s = store.recordingStartedAt {
                             HStack(spacing: 4) {
-                                Text(store.isPaused ? "На паузе ·" : "Идёт запись ·").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                                Text(store.isPaused ? L("На паузе ·", "Paused ·") : L("Идёт запись ·", "Recording ·")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
                                 ElapsedText(since: s, color: .pInk3).font(.system(size: 11))
                             }
                         }
@@ -588,7 +609,7 @@ struct MeetingView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Текущая запись")
+            .accessibilityLabel(L("Текущая запись", "Current recording"))
         }
     }
 
@@ -632,16 +653,16 @@ struct MeetingView: View {
             }
             Spacer()
             if store.isRecording {
-                toolbarButton(danger: true, label: "Стоп") { store.stop() }
+                toolbarButton(danger: true, label: L("Стоп", "Stop")) { store.stop() }
             } else {
-                toolbarButton(danger: false, accentDot: true, label: "Запись") { if store.canRecord { selectedId = nil; mainView = .meeting; store.start() } }
+                toolbarButton(danger: false, accentDot: true, label: L("Запись", "Record")) { if store.canRecord { selectedId = nil; mainView = .meeting; store.start() } }
                     .disabled(!store.canRecord)
             }
             if mainView == .meeting {
                 if store.hasTranscript || !store.notes.isEmpty || viewingPast {
-                    toolbarButton(danger: false, label: "Рецепты") { showRecipes = true }
+                    toolbarButton(danger: false, label: L("Рецепты", "Recipes")) { showRecipes = true }
                 }
-                toolbarButton(danger: false, label: "Поделиться") { showShare = true }
+                toolbarButton(danger: false, label: L("Поделиться", "Share")) { showShare = true }
                     .popover(isPresented: $showShare, arrowEdge: .bottom) { sharePopover }
             }
         }
@@ -666,22 +687,23 @@ struct MeetingView: View {
 
     private var paneTitle: String {
         if mainView != .meeting { return mainView.title }
-        if viewingPast, let s = selected { return s.kind == .dictation ? "Диктовка" : s.title }
-        if store.isRecording { return store.notes.topics.first ?? "Идёт запись" }
-        return "Готово к записи"
+        if viewingPast, let s = selected { return s.kind == .dictation ? L("Диктовка", "Dictation") : s.title }
+        if store.isRecording { return store.notes.topics.first ?? L("Идёт запись", "Recording") }
+        return L("Готово к записи", "Ready to record")
     }
     private var paneSubtitle: String {
         switch mainView {
         case .meeting:
             if viewingPast, let s = selected { return s.subtitle }
-            let lang = store.language == "auto" ? "авто" : store.language.uppercased()
-            return "Сегодня · \(lang)"
+            let lang = store.language == "auto" ? L("авто", "auto") : store.language.uppercased()
+            return L("Сегодня · \(lang)", "Today · \(lang)")
         case .tasks:
             let done = taskStore.tasks.count - taskStore.open.count
-            return "\(taskStore.open.count) открытых · \(done) завершено"
+            return L("\(taskStore.open.count) открытых · \(done) завершено", "\(taskStore.open.count) open · \(done) done")
         case .records:
-            return "\(sessions.sessions.count) записей · \(store.totalDictatedWords) слов надиктовано"
-        case .gloss: return "\(glossary.terms.count) терминов"
+            return L("\(sessions.sessions.count) записей · \(store.totalDictatedWords) слов надиктовано", "\(sessions.sessions.count) records · \(store.totalDictatedWords) words dictated")
+        case .gloss: return L("\(glossary.terms.count) терминов", "\(glossary.terms.count) terms")
+        case .commands: return L("\(CommandStore.shared.commands.count) команд", "\(CommandStore.shared.commands.count) commands")
         }
     }
 
@@ -693,6 +715,7 @@ struct MeetingView: View {
         case .tasks:   TasksView(store: store)
         case .records: RecordsView(store: store) { id in selectedId = id; mainView = .meeting }
         case .gloss:   GlossaryView()
+        case .commands: CommandsView()
         }
     }
 
@@ -720,22 +743,22 @@ struct MeetingView: View {
     private var liveBody: some View {
         switch store.stage {
         case .needsModel:
-            EmptyStateView(icon: "arrow.down.circle", title: "Модель ещё не загружена",
-                           subtitle: "\(ModelCatalog.info(store.selectedModel)?.title ?? "Модель") · \(ModelCatalog.info(store.selectedModel)?.sizeMB ?? 0) МБ, разово.",
-                           action: ("Скачать", store.downloadAndPrepare))
+            EmptyStateView(icon: "arrow.down.circle", title: L("Модель ещё не загружена", "Model isn't downloaded yet"),
+                           subtitle: L("\(ModelCatalog.info(store.selectedModel)?.title ?? "Модель") · \(ModelCatalog.info(store.selectedModel)?.sizeMB ?? 0) МБ, разово.", "\(ModelCatalog.info(store.selectedModel)?.title ?? "Model") · \(ModelCatalog.info(store.selectedModel)?.sizeMB ?? 0) MB, one time."),
+                           action: (L("Скачать", "Download"), store.downloadAndPrepare))
         case .downloading(let f):
-            LoadingLine(text: "Скачиваю модель — \(Int(f*100))%", progress: f)
+            LoadingLine(text: L("Скачиваю модель — \(Int(f*100))%", "Downloading model — \(Int(f*100))%"), progress: f)
         case .preparing:
-            LoadingLine(text: "Готовлю модель…", progress: nil)
+            LoadingLine(text: L("Готовлю модель…", "Preparing model…"), progress: nil)
         case .error(let m):
-            EmptyStateView(icon: "exclamationmark.triangle", title: "Что-то пошло не так", subtitle: m,
-                           action: ("Повторить", store.downloadAndPrepare), danger: true)
+            EmptyStateView(icon: "exclamationmark.triangle", title: L("Что-то пошло не так", "Something went wrong"), subtitle: m,
+                           action: (L("Повторить", "Retry"), store.downloadAndPrepare), danger: true)
         case .ready, .listening:
             if store.hasTranscript || !store.notes.isEmpty || store.askQuestion != nil || store.notesError != nil {
                 liveContent
             } else {
-                EmptyStateView(icon: "waveform", title: "Готово к записи",
-                               subtitle: "Нажмите «Запись» или \(Hotkeys.record).", action: nil)
+                EmptyStateView(icon: "waveform", title: L("Готово к записи", "Ready to record"),
+                               subtitle: L("Нажмите «Запись» или \(Hotkeys.record).", "Press «Record» or \(Hotkeys.record)."), action: nil)
             }
         }
     }
@@ -757,7 +780,7 @@ struct MeetingView: View {
             if store.notesGenerating {
                 HStack(spacing: 8) {
                     Circle().fill(Color.pInk3).frame(width: 6, height: 6)
-                    Text("ZVON пишет заметки").font(PFont.secondary).foregroundStyle(Color.pInk3)
+                    Text(L("ZVON пишет заметки", "ZVON is writing notes")).font(PFont.secondary).foregroundStyle(Color.pInk3)
                 }
             }
 
@@ -768,15 +791,15 @@ struct MeetingView: View {
 
     private func participantsRow(_ speakers: Set<String>) -> some View {
         let names = speakers.isEmpty
-            ? (store.captureMode == .micAndSystem ? ["Вы", "Собеседник"] : ["Вы"])
+            ? (store.captureMode == .micAndSystem ? [L("Вы", "You"), L("Собеседник", "Them")] : [L("Вы", "You")])
             : Array(speakers).sorted()
         return HStack(spacing: 12) {
             HStack(spacing: -8) {
                 ForEach(names.prefix(5), id: \.self) { Avatar(initials: String($0.prefix(1)).uppercased()) }
                 if names.count > 5 { Avatar(initials: "+\(names.count - 5)") }
             }
-            let lang = store.language == "auto" ? "авто" : store.language.uppercased()
-            Text("\(names.count) \(Self.plural(names.count, "участник", "участника", "участников")) · \(lang)")
+            let lang = store.language == "auto" ? L("авто", "auto") : store.language.uppercased()
+            Text(L("\(names.count) \(Self.plural(names.count, "участник", "участника", "участников")) · \(lang)", "\(names.count) \(names.count == 1 ? "participant" : "participants") · \(lang)"))
                 .font(.system(size: 12.5)).foregroundStyle(Color.pInk2)
         }
     }
@@ -793,7 +816,7 @@ struct MeetingView: View {
         let items = taskStore.forSession(sessionId)
         if !items.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                SectionLabel(text: "Задачи")
+                SectionLabel(text: L("Задачи", "Tasks"))
                 ForEach(items) { t in
                     HStack(spacing: 14) {
                         Button { taskStore.toggle(t.id) } label: {
@@ -816,7 +839,7 @@ struct MeetingView: View {
     private var liveFooter: some View {
         HStack(spacing: 10) {
             Circle().fill(store.isRecording && !store.isPaused ? Color.pAccent : Color.pControlBorder).frame(width: 7, height: 7)
-            Text(store.isPaused ? "На паузе" : store.isRecording ? "Слушаю разговор" : "Готов")
+            Text(store.isPaused ? L("На паузе", "Paused") : store.isRecording ? L("Слушаю разговор", "Listening") : L("Готов", "Ready"))
                 .font(.system(size: 12.5)).foregroundStyle(Color.pInk2)
             LevelMeterView(levels: store.levels, active: store.isRecording && !store.isPaused, bars: 3, leading: 2)
             Spacer()
@@ -824,7 +847,7 @@ struct MeetingView: View {
                 HStack(spacing: 6) {
                     if store.notesGenerating { PSpinner(size: 14) }
                     else { Text("✦").foregroundStyle(Color.pAccent) }
-                    Text(store.notesGenerating ? "Пишу…" : store.notes.isEmpty ? "Подвести итог" : "Обновить итог")
+                    Text(store.notesGenerating ? L("Пишу…", "Writing…") : store.notes.isEmpty ? L("Подвести итог", "Summarize") : L("Обновить итог", "Update summary"))
                 }
                 .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.parley(0x232120, 0xF4EFEA))
                 .padding(.horizontal, 14).frame(height: 30)
@@ -832,7 +855,7 @@ struct MeetingView: View {
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pAccent.opacity(0.5), lineWidth: 1))
             }
             .buttonStyle(.plain).disabled(store.notesGenerating || !store.hasTranscript)
-            .help("Подвести итог встречи (⌘⇧S)")
+            .help(L("Подвести итог встречи (⌘⇧S)", "Summarize the meeting (⌘⇧S)"))
         }
         .padding(.top, 16)
         .overlay(alignment: .top) { Rectangle().fill(Color.pLine2).frame(height: 1) }
@@ -866,11 +889,11 @@ struct MeetingView: View {
         let words = s.title.split { $0 == " " || $0 == "\n" }.count
         return VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Text("\(words) слов").font(PFont.mono).foregroundStyle(Color.pInk3)
+                Text(L("\(words) слов", "\(words) words")).font(PFont.mono).foregroundStyle(Color.pInk3)
                 Text(SessionStore.time.string(from: s.date)).font(PFont.mono).foregroundStyle(Color.pInk3)
                 Spacer()
                 Button { showRecipes = true } label: {
-                    HStack(spacing: 6) { Image(systemName: "doc.text"); Text("Собрать документ") }
+                    HStack(spacing: 6) { Image(systemName: "doc.text"); Text(L("Собрать документ", "Build a document")) }
                         .font(.system(size: 12, weight: .medium)).foregroundStyle(Color.pInk1)
                         .padding(.horizontal, 12).frame(height: 30)
                         .background(Color.pChrome).clipShape(RoundedRectangle(cornerRadius: PRadius.button))
@@ -886,16 +909,16 @@ struct MeetingView: View {
 
     private func summaryCard(_ notes: MeetingNotes) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 6) { Text("✦").foregroundStyle(Color.pAccent); Text("Итог").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1) }
+            HStack(spacing: 6) { Text("✦").foregroundStyle(Color.pAccent); Text(L("Итог", "Summary")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1) }
             if !notes.summary.isEmpty {
                 VStack(alignment: .leading, spacing: PSpace.xs) {
                     ForEach(Array(notes.summary.enumerated()), id: \.offset) { _, s in NoteBullet(text: s) }
                 }
             }
-            if !notes.decisions.isEmpty { notesSection("Решения", notes.decisions.map { ($0, nil as String?) }) }
+            if !notes.decisions.isEmpty { notesSection(L("Решения", "Decisions"), notes.decisions.map { ($0, nil as String?) }) }
             // Задачи render below as a checkable section (from TaskStore) — not here.
             if !notes.topics.isEmpty {
-                Text("Темы: " + notes.topics.joined(separator: " · ")).font(PFont.secondary).foregroundStyle(Color.pInk3)
+                Text(L("Темы: ", "Topics: ") + notes.topics.joined(separator: " · ")).font(PFont.secondary).foregroundStyle(Color.pInk3)
             }
         }
         .padding(PSpace.m).frame(maxWidth: .infinity, alignment: .leading)
@@ -905,7 +928,7 @@ struct MeetingView: View {
 
     private func summaryCardBullets(_ title: String, _ bullets: [String]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 6) { Text("✦").foregroundStyle(Color.pAccent); Text("Итог").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1) }
+            HStack(spacing: 6) { Text("✦").foregroundStyle(Color.pAccent); Text(L("Итог", "Summary")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1) }
             ForEach(Array(bullets.enumerated()), id: \.offset) { _, s in NoteBullet(text: s) }
         }
         .padding(PSpace.m).frame(maxWidth: .infinity, alignment: .leading)
@@ -937,10 +960,10 @@ struct MeetingView: View {
                 Button { store.dismissAsk() } label: {
                     Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.pInk3)
                         .frame(width: 28, height: 28).contentShape(Rectangle())
-                }.buttonStyle(.plain).accessibilityLabel("Закрыть")
+                }.buttonStyle(.plain).accessibilityLabel(L("Закрыть", "Close"))
             }
             if store.asking {
-                HStack(spacing: PSpace.xs) { PSpinner(size: 14); Text("ZVON думает…").font(PFont.secondary).foregroundStyle(Color.pInk3) }
+                HStack(spacing: PSpace.xs) { PSpinner(size: 14); Text(L("ZVON думает…", "ZVON is thinking…")).font(PFont.secondary).foregroundStyle(Color.pInk3) }
             } else if let err = store.askError {
                 Text(err).font(PFont.secondary).foregroundStyle(Color.pDanger).fixedSize(horizontal: false, vertical: true)
             } else if let a = store.askAnswer {
@@ -948,7 +971,7 @@ struct MeetingView: View {
             }
             if store.askAnswer != nil, !store.askSources.isEmpty {
                 Divider().overlay(Color.pLine2).padding(.vertical, 2)
-                Text("Источники").font(PFont.label).foregroundStyle(Color.pInk3)
+                Text(L("Источники", "Sources")).font(PFont.label).foregroundStyle(Color.pInk3)
                 FlowLayout(spacing: 6, lineSpacing: 6) {
                     ForEach(store.askSources) { s in
                         Button { selectedId = s.id; mainView = .meeting } label: {
@@ -969,11 +992,11 @@ struct MeetingView: View {
         HStack(alignment: .top, spacing: PSpace.s) {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 13)).foregroundStyle(Color.pDanger).padding(.top, 1)
             VStack(alignment: .leading, spacing: PSpace.xs) {
-                Text("AI-заметки недоступны").font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
+                Text(L("AI-заметки недоступны", "AI notes unavailable")).font(PFont.secondaryStrong).foregroundStyle(Color.pInk1)
                 Text(message).font(PFont.secondary).foregroundStyle(Color.pInk2).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: PSpace.s) {
-                    Button("Повторить") { store.regenerateNotes() }.buttonStyle(PBorderedButtonStyle())
-                    Button("Открыть настройки") { showingSettings = true }.buttonStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pAccent)
+                    Button(L("Повторить", "Retry")) { store.regenerateNotes() }.buttonStyle(PBorderedButtonStyle())
+                    Button(L("Открыть настройки", "Open settings")) { showingSettings = true }.buttonStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pAccent)
                 }
             }
             Spacer(minLength: 0)
@@ -995,13 +1018,13 @@ struct MeetingView: View {
                     Text("00:00").font(PFont.mono).foregroundStyle(Color.pInk3)
                 }
             }
-            meterCluster("Мик", store.levels)
-            meterCluster("Дин", store.levelsThem)
+            meterCluster(L("Мик", "Mic"), store.levels)
+            meterCluster(L("Дин", "Spk"), store.levelsThem)
             Spacer()
             HStack(spacing: 16) {
-                KeyHintView(keys: Hotkeys.search, label: "Поиск")
-                KeyHintView(keys: Hotkeys.record, label: "Запись")
-                KeyHintView(keys: "Space", label: "Пауза")
+                KeyHintView(keys: Hotkeys.search, label: L("Поиск", "Search"))
+                KeyHintView(keys: Hotkeys.record, label: L("Запись", "Record"))
+                KeyHintView(keys: "Space", label: L("Пауза", "Pause"))
             }
         }
         .padding(.horizontal, 16).frame(height: 32)
@@ -1030,10 +1053,10 @@ struct MeetingView: View {
 
     private var sharePopover: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ShareMenuRow(title: shareCopied ? "Скопировано ✓" : "Копировать текст",
+            ShareMenuRow(title: shareCopied ? L("Скопировано ✓", "Copied ✓") : L("Копировать текст", "Copy text"),
                          icon: shareCopied ? "checkmark" : "doc.on.doc", tint: shareCopied) { copyShare() }
-            ShareMenuRow(title: "Сохранить PDF…", icon: "arrow.down.doc") { savePDF() }
-            ShareMenuRow(title: "Поделиться…", icon: "square.and.arrow.up") { systemShare() }
+            ShareMenuRow(title: L("Сохранить PDF…", "Save PDF…"), icon: "arrow.down.doc") { savePDF() }
+            ShareMenuRow(title: L("Поделиться…", "Share…"), icon: "square.and.arrow.up") { systemShare() }
         }
         .padding(6).frame(width: 226)
     }
@@ -1056,7 +1079,7 @@ struct MeetingView: View {
         let parts = Array(Set(store.lines.map(\.speaker.title))).sorted()
         let turns = store.lines.map { MeetingExport.Turn(role: $0.speaker.title, text: $0.text) }
         let tasks = taskStore.forSession(store.currentSessionId).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
-        return MeetingExport(title: store.notes.topics.first ?? "Встреча",
+        return MeetingExport(title: store.notes.topics.first ?? L("Встреча", "Meeting"),
                              date: store.recordingStartedAt ?? Date(),
                              durationSec: store.recordingStartedAt.map { Date().timeIntervalSince($0) },
                              participants: parts, summary: store.notes.summary, decisions: store.notes.decisions,

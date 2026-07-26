@@ -8,12 +8,12 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .general: return "Общие"
-        case .hotkeys: return "Горячие клавиши"
-        case .stt:     return "Речь"
-        case .llm:     return "AI-модель"
-        case .audio:   return "Аудио"
-        case .priv:    return "Приватность"
+        case .general: return L("Общие", "General")
+        case .hotkeys: return L("Горячие клавиши", "Shortcuts")
+        case .stt:     return L("Речь", "Speech")
+        case .llm:     return L("AI-модель", "AI model")
+        case .audio:   return L("Аудио", "Audio")
+        case .priv:    return L("Приватность", "Privacy")
         }
     }
 }
@@ -21,6 +21,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 struct ParleySettingsView: View {
     @EnvironmentObject var store: TranscriptStore
     @EnvironmentObject var models: ModelManager
+    @ObservedObject private var loc = L11n.shared
     @State private var tab: SettingsTab = .general
     var onClose: (() -> Void)? = nil
 
@@ -46,8 +47,8 @@ struct ParleySettingsView: View {
                 Button { onClose() } label: {
                     Image(systemName: "chevron.left").font(PFont.secondaryStrong).foregroundStyle(Color.pInk2)
                         .frame(width: 28, height: 28).background(Circle().fill(Color.pSelection)).contentShape(Circle())
-                }.buttonStyle(.plain).accessibilityLabel("Назад")
-                Text("Настройки").font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.pInk1)
+                }.buttonStyle(.plain).accessibilityLabel(L("Назад", "Back"))
+                Text(L("Настройки", "Settings")).font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.pInk1)
                 Spacer()
             }
             .padding(.horizontal, 14)
@@ -117,21 +118,23 @@ struct ParleySettingsView: View {
 
     private var generalTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
-            head("Общие", "Запуск, строка меню и внешний вид.")
+            head(L("Общие", "General"), L("Запуск, строка меню и внешний вид.", "Startup, menu bar, and appearance."))
             group {
-                PRow("Запускать при входе") {
+                PRow(L("Запускать при входе", "Launch at login")) {
                     ParleyToggle(on: Binding(get: { launchAtLogin }, set: { setLaunchAtLogin($0) }))
                 }
                 PDivider()
-                PRow("Показывать в строке меню") { ParleyToggle(on: $store.showMenuBar) }
+                PRow(L("Показывать в строке меню", "Show in menu bar")) { ParleyToggle(on: $store.showMenuBar) }
                 PDivider()
-                PRow("Плавающий виджет") {
+                PRow(L("Плавающий виджет", "Floating widget")) {
                     ParleyToggle(on: Binding(get: { !store.widgetHidden }, set: { store.widgetHidden = !$0 }))
                 }
                 PDivider()
-                PRow("Тема") { PSegmented(selection: $store.themePref, options: ThemePref.allCases.map { ($0, $0.title) }) }
+                PRow(L("Тема", "Theme")) { PSegmented(selection: $store.themePref, options: ThemePref.allCases.map { ($0, $0.title) }) }
                 PDivider()
-                PRow("Язык интерфейса") { Text("Русский").font(PFont.secondary).foregroundStyle(Color.pInk2) }
+                PRow(L("Язык интерфейса", "Interface language")) {
+                    PSegmented(selection: $loc.lang, options: AppLang.allCases.map { ($0, $0.title) })
+                }
             }
         }
         .onAppear { launchAtLogin = (SMAppService.mainApp.status == .enabled) }
@@ -152,28 +155,28 @@ struct ParleySettingsView: View {
 
     private var hotkeysTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
-            head("Горячие клавиши", "Нажми на сочетание, чтобы изменить его.")
-            group("Диктовка",
-                  footnote: "Быстрый тап той же клавиши или клавиша+буква (⌘C) диктовку не запускают.") {
-                PRow("Как активировать", sub: "Удерживать — говоришь и отпускаешь; переключать — клик вкл/выкл") {
+            head(L("Горячие клавиши", "Shortcuts"), L("Нажми на сочетание, чтобы изменить его.", "Click a shortcut to change it."))
+            group(L("Диктовка", "Dictation"),
+                  footnote: L("Быстрый тап той же клавиши или клавиша+буква (⌘C) диктовку не запускают.", "A quick tap of the same key, or key+letter (⌘C), won't start dictation.")) {
+                PRow(L("Как активировать", "How to activate"), sub: L("Удерживать — говоришь и отпускаешь; переключать — клик вкл/выкл", "Hold — speak and release; toggle — click on/off")) {
                     PSegmented(selection: $store.dictationMode, options: DictationMode.allCases.map { ($0, $0.title) })
                 }
                 PDivider()
-                PRow("Клавиша-триггер", sub: "Одна клавиша (⌘, Fn, ⌥…) — выбери здесь. Рекордер ниже — только для сочетаний.") {
+                PRow(L("Клавиша-триггер", "Trigger key"), sub: L("Одна клавиша (⌘, Fn, ⌥…) — выбери здесь. Рекордер ниже — только для сочетаний.", "A single key (⌘, Fn, ⌥…) — pick it here. The recorder below is for combos only.")) {
                     Picker("", selection: $store.dictationTrigger) {
                         ForEach(DictationTrigger.allCases) { Text($0.title).tag($0) }
                     }.labelsHidden().fixedSize()
                 }
                 if store.dictationTrigger == .combo {
                     PDivider()
-                    PRow("Сочетание (модификатор + клавиша)") { KeyboardShortcuts.Recorder(for: .dictation) }
+                    PRow(L("Сочетание (модификатор + клавиша)", "Shortcut (modifier + key)")) { KeyboardShortcuts.Recorder(for: .dictation) }
                 }
                 PDivider()
-                PRow("Универсальный доступ", sub: "Для авто-вставки и одиночной клавиши-триггера") {
+                PRow(L("Универсальный доступ", "Accessibility"), sub: L("Для авто-вставки и одиночной клавиши-триггера", "For auto-paste and a single trigger key")) {
                     if axTrusted {
-                        Label("Разрешён", systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
+                        Label(L("Разрешён", "Allowed"), systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
                     } else {
-                        Button("Разрешить") {
+                        Button(L("Разрешить", "Allow")) {
                             TextInserter.requestAccessibility()
                             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
                                 NSWorkspace.shared.open(url)
@@ -184,18 +187,18 @@ struct ParleySettingsView: View {
                 }
             }
             .onAppear { axTrusted = TextInserter.canAutoPaste }
-            group("Остальные") {
-                PRow("Начать / остановить запись") { KeyboardShortcuts.Recorder(for: .toggleRecording) }
+            group(L("Остальные", "Other")) {
+                PRow(L("Начать / остановить запись", "Start / stop recording")) { KeyboardShortcuts.Recorder(for: .toggleRecording) }
                 PDivider()
-                PRow("Подвести итог") { KeyboardShortcuts.Recorder(for: .summarize) }
+                PRow(L("Подвести итог", "Summarize")) { KeyboardShortcuts.Recorder(for: .summarize) }
                 PDivider()
-                PRow("Открыть заметки") { keycap("⌘↩") }
+                PRow(L("Открыть заметки", "Open notes")) { keycap("⌘↩") }
                 PDivider()
-                PRow("Поиск и вопросы") { keycap("⌘K") }
+                PRow(L("Поиск и вопросы", "Search & ask")) { keycap("⌘K") }
                 PDivider()
-                PRow("Свернуть панель") { keycap("Esc") }
+                PRow(L("Свернуть панель", "Collapse panel")) { keycap("Esc") }
                 PDivider()
-                PRow("Пауза / продолжить") { keycap("Space") }
+                PRow(L("Пауза / продолжить", "Pause / resume")) { keycap("Space") }
             }
         }
     }
@@ -204,35 +207,35 @@ struct ParleySettingsView: View {
 
     private var sttTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
-            head("Речь", "Распознавание речи — на устройстве.")
-            group(footnote: "Parakeet TDT v3 (NVIDIA, через FluidAudio) — точный русский на устройстве, ~реалтайм на Apple Silicon (Neural Engine). Модель подгружается автоматически; аудио не покидает Mac.") {
-                PRow("Движок") { Text("Parakeet TDT v3").font(PFont.secondary).foregroundStyle(Color.pInk1) }
+            head(L("Речь", "Speech"), L("Распознавание речи — на устройстве.", "Speech recognition — on device."))
+            group(footnote: L("Parakeet TDT v3 (NVIDIA, через FluidAudio) — точный русский на устройстве, ~реалтайм на Apple Silicon (Neural Engine). Модель подгружается автоматически; аудио не покидает Mac.", "Parakeet TDT v3 (NVIDIA, via FluidAudio) — accurate on-device Russian, near real-time on Apple Silicon (Neural Engine). The model downloads automatically; audio never leaves your Mac.")) {
+                PRow(L("Движок", "Engine")) { Text("Parakeet TDT v3").font(PFont.secondary).foregroundStyle(Color.pInk1) }
                 PDivider()
-                PRow("Язык распознавания") {
+                PRow(L("Язык распознавания", "Recognition language")) {
                     Picker("", selection: $store.language) {
-                        Text("Авто").tag("auto"); Text("Русский").tag("ru"); Text("English").tag("en")
+                        Text(L("Авто", "Auto")).tag("auto"); Text(L("Русский", "Russian")).tag("ru"); Text("English").tag("en")
                     }.labelsHidden().fixedSize()
                 }
                 PDivider()
-                PRow("Статус") {
-                    Label("Локально · на устройстве", systemImage: "checkmark.circle.fill")
+                PRow(L("Статус", "Status")) {
+                    Label(L("Локально · на устройстве", "Local · on device"), systemImage: "checkmark.circle.fill")
                         .font(PFont.secondary).foregroundStyle(Color.pSuccess)
                 }
             }
-            group("Улучшение через ИИ",
-                  footnote: "Неуверенно распознанные фразы отправляются в AI-модель, которая правит только явные ошибки распознавания (имена, термины, похожие по звучанию слова), не меняя смысл. Работает только с подключённой AI-моделью; распознавание остаётся локальным.") {
-                PRow("Исправлять ошибки распознавания", sub: "Только неуверенные фразы — точечно, через выбранную AI-модель") {
+            group(L("Улучшение через ИИ", "AI enhancement"),
+                  footnote: L("Неуверенно распознанные фразы отправляются в AI-модель, которая правит только явные ошибки распознавания (имена, термины, похожие по звучанию слова), не меняя смысл. Работает только с подключённой AI-моделью; распознавание остаётся локальным.", "Low-confidence phrases are sent to the AI model, which fixes only clear recognition errors (names, terms, similar-sounding words) without changing the meaning. Works only with a connected AI model; recognition stays local.")) {
+                PRow(L("Исправлять ошибки распознавания", "Fix recognition errors"), sub: L("Только неуверенные фразы — точечно, через выбранную AI-модель", "Low-confidence phrases only — targeted, via the selected AI model")) {
                     ParleyToggle(on: $store.aiTranscriptRepairEnabled)
                 }
             }
-            group("Обработка диктовки",
-                  footnote: "Только для диктовки (удержание/переключение) — не для записи встреч. Убирает слова-паразиты и оговорки, чинит пунктуацию через ИИ. Если модель недоступна — текст вставится как есть.") {
-                PRow("Чистить через ИИ", sub: "Нужна настроенная AI-модель") {
+            group(L("Обработка диктовки", "Dictation processing"),
+                  footnote: L("Только для диктовки (удержание/переключение) — не для записи встреч. Убирает слова-паразиты и оговорки, чинит пунктуацию через ИИ. Если модель недоступна — текст вставится как есть.", "For dictation only (hold/toggle) — not for meeting recordings. Removes filler words and slips, fixes punctuation via AI. If the model is unavailable, text is inserted as-is.")) {
+                PRow(L("Чистить через ИИ", "Clean up with AI"), sub: L("Нужна настроенная AI-модель", "Requires a configured AI model")) {
                     ParleyToggle(on: $store.aiDictationEnabled)
                 }
                 if store.aiDictationEnabled {
                     PDivider()
-                    PRow("Стиль") {
+                    PRow(L("Стиль", "Style")) {
                         PSegmented(selection: $store.aiDictationStyle, options: DictationStyle.allCases.map { ($0, $0.title) })
                     }
                 }
@@ -248,18 +251,18 @@ struct ParleySettingsView: View {
     private var llmTab: some View {
         let p = store.llmProvider
         return VStack(alignment: .leading, spacing: PSpace.l) {
-            head("AI-модель", "Подключи облачный ключ (OpenAI / Anthropic) или свою модель.")
-            group("Провайдер") {
+            head(L("AI-модель", "AI model"), L("Подключи облачный ключ (OpenAI / Anthropic) или свою модель.", "Connect a cloud key (OpenAI / Anthropic) or your own model."))
+            group(L("Провайдер", "Provider")) {
                 ForEach(LLMProvider.allCases) { prov in
                     providerRow(prov)
                     if prov != LLMProvider.allCases.last { PDivider() }
                 }
             }
 
-            group("Подключение", footnote: p.needsKey
-                  ? "Ключ хранится в Keychain (не в файлах). У каждого провайдера — свой ключ."
-                  : "Локальная модель: ключ не нужен, всё на устройстве.") {
-                PRow("Модель") {
+            group(L("Подключение", "Connection"), footnote: p.needsKey
+                  ? L("Ключ хранится в Keychain (не в файлах). У каждого провайдера — свой ключ.", "The key is stored in the Keychain (not in files). Each provider has its own key.")
+                  : L("Локальная модель: ключ не нужен, всё на устройстве.", "Local model: no key needed, everything on device.")) {
+                PRow(L("Модель", "Model")) {
                     fieldInput($modelText, p.defaultModel)
                         .onChange(of: modelText) { _, v in store.setProviderModel(store.llmProvider, v) }
                 }
@@ -274,13 +277,13 @@ struct ParleySettingsView: View {
                 }
                 if p.needsKey {
                     PDivider()
-                    PRow("API-ключ") { keyField }
+                    PRow(L("API-ключ", "API key")) { keyField }
                 }
                 PDivider()
-                PRow("Связь") {
+                PRow(L("Связь", "Connectivity")) {
                     HStack(spacing: 10) {
                         connectionStatusInline
-                        Button(store.llmTest == "…" ? "Проверяю…" : "Проверить") { store.testLLM() }
+                        Button(store.llmTest == "…" ? L("Проверяю…", "Testing…") : L("Проверить", "Test")) { store.testLLM() }
                             .buttonStyle(PBorderedButtonStyle()).disabled(store.llmTest == "…")
                     }
                 }
@@ -288,10 +291,10 @@ struct ParleySettingsView: View {
             .onAppear { reloadProviderFields() }
             .onChange(of: store.llmProvider) { _, _ in reloadProviderFields() }
 
-            group("Задачи", footnote: "Извлечение задач срабатывает на голосовые команды («создай задачу…», «напомни…») — не на всю расшифровку.") {
-                PRow("Саммари и Итог") { ParleyToggle(on: $store.summariesEnabled) }
+            group(L("Задачи", "Tasks"), footnote: L("Извлечение задач срабатывает на голосовые команды («создай задачу…», «напомни…») — не на всю расшифровку.", "Task extraction triggers on voice commands (“create a task…”, “remind me…”) — not on the whole transcript.")) {
+                PRow(L("Саммари и Итог", "Summaries & recap")) { ParleyToggle(on: $store.summariesEnabled) }
                 PDivider()
-                PRow("Извлечение задач") { ParleyToggle(on: $store.taskExtractionEnabled) }
+                PRow(L("Извлечение задач", "Task extraction")) { ParleyToggle(on: $store.taskExtractionEnabled) }
             }
         }
     }
@@ -318,7 +321,7 @@ struct ParleySettingsView: View {
         switch store.llmTest {
         case "": EmptyView()
         case "…": PSpinner(size: 14)
-        case "ok": Label("Подключено", systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
+        case "ok": Label(L("Подключено", "Connected"), systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
         default: Text(store.llmTest).font(.system(size: 11)).foregroundStyle(Color.pDanger).lineLimit(2).frame(maxWidth: 300)
         }
     }
@@ -347,11 +350,11 @@ struct ParleySettingsView: View {
 
     private var audioTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
-            head("Аудио", "Что писать — микрофон или ещё и динамик.")
+            head(L("Аудио", "Audio"), L("Что писать — микрофон или ещё и динамик.", "What to capture — mic only, or the speaker too."))
             group(footnote: store.captureMode == .micAndSystem
-                  ? "Звук динамика — системные аудио-краны (macOS 14.2+). При первом запуске система попросит «Запись звука системы»."
+                  ? L("Звук динамика — системные аудио-краны (macOS 14.2+). При первом запуске система попросит «Запись звука системы».", "Speaker audio uses system audio taps (macOS 14.2+). On first launch, the system will ask for “System Audio Recording”.")
                   : store.captureMode.note) {
-                PRow("Источник") {
+                PRow(L("Источник", "Source")) {
                     PSegmented(selection: $store.captureMode, options: CaptureMode.allCases.map { ($0, $0.title) })
                 }
             }
@@ -362,11 +365,11 @@ struct ParleySettingsView: View {
 
     private var privTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
-            head("Приватность", "Обработка на устройстве по умолчанию.")
-            group(footnote: "Распознавание идёт локально — аудио не покидает Mac. Итог и вопросы уходят только на выбранный AI-эндпоинт.") {
-                PRow("Распознавание речи") { Text("На устройстве").font(PFont.secondary).foregroundStyle(Color.pInk2) }
+            head(L("Приватность", "Privacy"), L("Обработка на устройстве по умолчанию.", "On-device processing by default."))
+            group(footnote: L("Распознавание идёт локально — аудио не покидает Mac. Итог и вопросы уходят только на выбранный AI-эндпоинт.", "Recognition runs locally — audio never leaves your Mac. Summaries and questions go only to the selected AI endpoint.")) {
+                PRow(L("Распознавание речи", "Speech recognition")) { Text(L("На устройстве", "On device")).font(PFont.secondary).foregroundStyle(Color.pInk2) }
                 PDivider()
-                PRow("AI-заметки") { Text("Только на ваш эндпоинт").font(PFont.secondary).foregroundStyle(Color.pInk2) }
+                PRow(L("AI-заметки", "AI notes")) { Text(L("Только на ваш эндпоинт", "Only to your endpoint")).font(PFont.secondary).foregroundStyle(Color.pInk2) }
             }
         }
     }

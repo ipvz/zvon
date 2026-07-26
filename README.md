@@ -27,6 +27,7 @@ ZVON — это одно окно и один плавающий виджет, �
 - **✦ Итог** — LLM собирает тезисы, решения и темы (но **не** задачи).
 - **Задачи только по голосу** — задача появляется, только когда вы произнесли триггер; никакой фоновой генерации из саммари.
 - **Диктовка** — глобальный хоткей, вставка в курсор, опциональная AI-причёска текста.
+- **Команды голосом** — «открой почту» / «запусти VPN» → сайт (в браузере по умолчанию), приложение или Shortcut. Реестр алиасов в отдельной вкладке, матч локальный и мгновенный.
 - **Словарь, рецепты, вопросы по встрече и по всему архиву.**
 
 > Целевой продукт собирается как **`ZVON.app`** (`PRODUCT_NAME=ZVON`), хотя проект и схема XcodeGen называются `Parley`, а bundle id — `com.parley.app`. Marketing version `0.1.0`, минимум macOS `14.0`.
@@ -42,6 +43,7 @@ ZVON — это одно окно и один плавающий виджет, �
 | **Словарь** | Локальная детерминированная коррекция (точный маппинг вариантов, regex фраз, fuzzy: транслит + Левенштейн ≥ 0.86) + инъекция канонических терминов в LLM-промпт как DATA. | `correctionEnabled = on` |
 | **Рецепты** | Сохранённые prompt-линзы над материалами встречи: Письмо-follow-up, Протокол, Тезисы в Telegram, Черновик ТЗ/PRD, Разбор звонка. Кастомные рецепты, `temp 0.35`. | 5 встроенных |
 | **Вопросы** | `ask()` (⌘K) — строго по текущей встрече, «честно скажи» если ответа нет. `askArchive()` — по всему архиву через keyword+recency (без эмбеддингов), один LLM-вызов с цитированием источника. | — |
+| **Команды** | Голосом «открой …/запусти …» → открыть сайт (браузер по умолчанию) / приложение / Shortcut. Реестр алиасов, детерминированный локальный матч (без LLM), срабатывает только на короткой реплике с глаголом-первым-словом. | вкладка «Команды» |
 
 **AI-причёска диктовки** (`aiDictationEnabled`, **выключена** по умолчанию): `polishDictation` убирает слова-паразиты, применяет устные самокоррекции и команды удаления, переводит проговорённую пунктуацию в символы, нормализует числа/проценты/деньги/время (`250 000 ₽`, `15 %`, `15:00`). Жёсткий таймаут **6 c** — при срыве возвращается сырой текст, диктовка никогда не виснет.
 
@@ -134,6 +136,7 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 - **✦ Summary** — the LLM assembles theses, decisions and topics (but **not** tasks).
 - **Tasks by voice only** — a task appears only when you say a trigger; no ambient generation from the summary.
 - **Dictation** — a global hotkey, insert-at-cursor, optional AI cleanup of the text.
+- **Voice commands** — “открой почту” / “запусти VPN” → open a site (in the default browser), an app, or a Shortcut. An alias registry in its own tab; matching is local and instant.
 - **Glossary, recipes, questions about the meeting and across the whole archive.**
 
 > The shipped product builds as **`ZVON.app`** (`PRODUCT_NAME=ZVON`), even though the XcodeGen project and scheme are named `Parley` and the bundle id is `com.parley.app`. Marketing version `0.1.0`, minimum macOS `14.0`.
@@ -149,6 +152,7 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 | **Glossary** | Local deterministic correction (exact variant map, phrase regex, fuzzy: transliteration + Levenshtein ≥ 0.86) + injection of canonical terms into the LLM prompt as DATA. | `correctionEnabled = on` |
 | **Recipes** | Saved prompt lenses over the meeting material: follow-up email, minutes, Telegram digest, PRD draft, call review. Custom recipes, `temp 0.35`. | 5 built-in |
 | **Questions** | `ask()` (⌘K) — strictly about the current meeting, “say so honestly” if there’s no answer. `askArchive()` — across the whole archive via keyword + recency (no embeddings), one LLM call that cites its source. | — |
+| **Commands** | By voice “открой …/запусти …” → open a site (default browser) / app / Shortcut. Alias registry, deterministic local match (no LLM), fires only on a short utterance whose first word is a verb. | Commands tab |
 
 **Dictation cleanup** (`aiDictationEnabled`, **off** by default): `polishDictation` removes filler words, applies spoken self-corrections and delete commands, turns spoken punctuation into symbols, normalises numbers/percentages/money/time (`250 000 ₽`, `15 %`, `15:00`). A hard **6 s** timeout — on any stall it returns the raw text, so dictation never hangs.
 
