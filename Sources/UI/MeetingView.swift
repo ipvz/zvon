@@ -11,6 +11,7 @@ struct MeetingView: View {
     @ObservedObject private var sessions = SessionStore.shared
     @ObservedObject private var taskStore = TaskStore.shared
     @ObservedObject private var glossary = GlossaryStore.shared
+    @ObservedObject private var commandStore = CommandStore.shared
     @State private var search = ""
     @State private var selectedId: UUID?
     @State private var mainView: MainView = .meeting
@@ -261,6 +262,9 @@ struct MeetingView: View {
             }
         case .gloss:
             let n = glossary.terms.count
+            if n > 0 { Text("\(n)").font(.system(size: 12)).foregroundStyle(Color.pInk3) }
+        case .commands:
+            let n = commandStore.commands.count
             if n > 0 { Text("\(n)").font(.system(size: 12)).foregroundStyle(Color.pInk3) }
         default: EmptyView()
         }
