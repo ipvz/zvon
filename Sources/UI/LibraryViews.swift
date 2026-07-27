@@ -657,7 +657,7 @@ struct CommandsView: View {
             }
             field(L("Ещё слова через запятую (gmail, мейл)", "More words, comma-separated (gmail, mail)"), aliasStr(c.id))
             HStack(spacing: 10) {
-                field(c.kind.valueLabel, str(c.id, \.value))
+                if c.kind == .openApp { AppPickerField(value: str(c.id, \.value)) } else { field(c.kind.valueLabel, str(c.id, \.value)) }
                 Toggle("", isOn: bool(c.id, \.needsConfirm)).labelsHidden().toggleStyle(.switch).controlSize(.small)
                 Text(L("подтв.", "confirm")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
             }
@@ -700,5 +700,77 @@ struct CommandsView: View {
     private func aliasStr(_ id: UUID) -> Binding<String> {
         Binding(get: { store.commands.first { $0.id == id }?.aliases.joined(separator: ", ") ?? "" },
                 set: { s in store.update(id) { $0.aliases = s.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } } })
+    }
+}
+
+/// Searchable app picker: shows the current app; click opens a popover with a search field + the
+/// filtered list of installed apps — start typing to narrow it, click a result to pick. Guarantees
+/// the command points at a real bundle (no typos → the app always opens).
+struct AppPickerField: View {
+    @Binding var value: String
+    @State private var open = false
+    @State private var query = ""
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        Button { query = ""; open = true } label: {
+            HStack(spacing: 6) {
+                Text(value.isEmpty ? L("Выбрать приложение", "Choose app") : value)
+                    .foregroundStyle(value.isEmpty ? Color.pInk3 : Color.pInk1).lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.down").font(.system(size: 9)).foregroundStyle(Color.pInk3)
+            }
+            .font(.system(size: 13)).frame(maxWidth: .infinity).frame(height: 30).padding(.horizontal, 10)
+            .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pLine, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) { picker }
+    }
+
+    private var picker: some View {
+        let apps = CommandStore.installedApps()
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        let matches = q.isEmpty ? apps : apps.filter { $0.lowercased().contains(q) }
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                TextField(L("Поиск приложения", "Search app"), text: $query)
+                    .textFieldStyle(.plain).font(.system(size: 13)).foregroundStyle(Color.pInk1).focused($searchFocused)
+            }
+            .padding(9).background(Color.pField)
+            Divider().overlay(Color.pLine)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if matches.isEmpty {
+                        Text(L("Ничего не найдено", "No matches")).font(.system(size: 12)).foregroundStyle(Color.pInk3).padding(10)
+                    }
+                    ForEach(matches, id: \.self) { name in
+                        Button { value = name; open = false } label: {
+                            Text(name).font(.system(size: 13)).foregroundStyle(Color.pInk1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12).padding(.vertical, 6).contentShape(Rectangle())
+                        }
+                        .buttonStyle(PopRowButtonStyle())
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 280)
+        }
+        .frame(width: 260)
+        .background(Color.pCard)
+        .onAppear { searchFocused = true }
+    }
+}
+
+/// A plain list-row button with a subtle hover highlight (for the app picker popover).
+private struct PopRowButtonStyle: ButtonStyle {
+    @State private var hover = false
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(hover ? Color.pAccent.opacity(0.12) : Color.clear)
+            .onHover { hover = $0 }
     }
 }

@@ -134,6 +134,19 @@ final class CommandStore: ObservableObject {
         return c.phrase.isEmpty ? value : c.phrase
     }
 
+    /// Installed apps (basename without ".app"), sorted — for the app picker in the command editor,
+    /// so a command targets a real app, not a typo.
+    static func installedApps() -> [String] {
+        let dirs = ["/Applications", "\(NSHomeDirectory())/Applications", "/System/Applications", "/System/Applications/Utilities"]
+        let fm = FileManager.default
+        var names = Set<String>()
+        for d in dirs {
+            guard let items = try? fm.contentsOfDirectory(atPath: d) else { continue }
+            for it in items where it.hasSuffix(".app") { names.insert(String(it.dropLast(4))) }
+        }
+        return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
     /// Resolve an app by (typed) name in the standard app folders — exact "<name>.app" first, then a
     /// case-insensitive contains, so "Notion" / "notion" / "safari" all find the bundle.
     private static func appURL(named name: String) -> URL? {

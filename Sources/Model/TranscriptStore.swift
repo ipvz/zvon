@@ -915,6 +915,7 @@ final class TranscriptStore: ObservableObject {
     private func cleanDictation(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         t = t.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
+        t = RussianNumbers.digitsify(t)   // «сто пятьдесят» → «150», local + instant, no LLM needed
         if let f = t.first { t = f.uppercased() + t.dropFirst() }
         return t
     }
