@@ -137,8 +137,16 @@ struct RecipesSheet: View {
     // MARK: Actions
 
     private func run(_ r: Recipe) {
-        selected = r; error = nil; output = ""; running = true
-        let mat = material()
+        selected = r; error = nil; output = ""
+        let mat = material().trimmingCharacters(in: .whitespacesAndNewlines)
+        // No meeting/dictation content → a recipe has nothing to work on; running it would just make
+        // the model echo/reformat the recipe's own instruction. Block with a clear message instead.
+        guard mat.count >= 25 else {
+            error = L("Нет материала: запишите встречу или выберите запись, затем соберите документ.",
+                      "No material: record or pick a meeting first, then build the document.")
+            return
+        }
+        running = true
         Task {
             do {
                 let result = try await store.runRecipe(instruction: r.prompt, material: mat)
