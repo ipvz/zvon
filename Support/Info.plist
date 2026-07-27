@@ -28,6 +28,8 @@
 	<string>ZVON записывает звук из динамика (собеседников на созвоне), чтобы расшифровывать их речь. Аудио не покидает ваш Mac.</string>
 	<key>NSRemindersUsageDescription</key>
 	<string>ZVON добавляет задачи из встреч в приложение «Напоминания», если вы это выберете.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>ZVON читает календарь, чтобы автоматически назвать запись по встрече и подставить участников. Данные не покидают Mac.</string>
 	<!-- LLM-заметки ходят на self-hosted эндпоинт по HTTP. ATS иначе блокирует незащищённое
 	     соединение (curl не проверяет ATS — потому там работало, а в приложении нет). -->
 	<key>NSAppTransportSecurity</key>

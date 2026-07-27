@@ -16,6 +16,7 @@ struct RecipesSheet: View {
     @State private var editing: Recipe?          // editor for a custom recipe (or a fresh one)
     @State private var showEditor = false
     @State private var copied = false
+    @State private var tgSent = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -117,6 +118,9 @@ struct RecipesSheet: View {
                 HStack(spacing: 8) {
                     actionButton(copied ? L("Скопировано ✓", "Copied ✓") : L("Копировать", "Copy"), "doc.on.doc", tint: copied) { copy() }
                     actionButton(L("Поделиться", "Share"), "square.and.arrow.up") { share() }
+                    if Telegram.isConfigured {
+                        actionButton(tgSent ? L("Отправлено ✓", "Sent ✓") : L("В Telegram", "To Telegram"), "paperplane", tint: tgSent) { sendTelegram() }
+                    }
                     Spacer()
                     actionButton(L("Обновить", "Regenerate"), "arrow.clockwise") { if let s = selected { run(s) } }
                 }.padding(.horizontal, 16).padding(.vertical, 10)
@@ -157,6 +161,21 @@ struct RecipesSheet: View {
             }
         }
     }
+    private func sendTelegram() {
+        guard !output.isEmpty else { return }
+        let text = output
+        Task {
+            do {
+                try await Telegram.send(text)
+                await MainActor.run { tgSent = true }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run { tgSent = false }
+            } catch {
+                await MainActor.run { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+            }
+        }
+    }
+
     private func copy() {
         let pb = NSPasteboard.general; pb.clearContents(); pb.setString(output, forType: .string)
         copied = true

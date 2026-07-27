@@ -4,7 +4,7 @@ import KeyboardShortcuts
 import ServiceManagement
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, hotkeys, stt, llm, audio, priv
+    case general, hotkeys, stt, llm, integrations, audio, priv
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
         case .hotkeys: return L("Горячие клавиши", "Shortcuts")
         case .stt:     return L("Речь", "Speech")
         case .llm:     return L("AI-модель", "AI model")
+        case .integrations: return L("Интеграции", "Integrations")
         case .audio:   return L("Аудио", "Audio")
         case .priv:    return L("Приватность", "Privacy")
         }
@@ -88,6 +89,7 @@ struct ParleySettingsView: View {
         case .hotkeys: hotkeysTab
         case .stt:     sttTab
         case .llm:     llmTab
+        case .integrations: integrationsTab
         case .audio:   audioTab
         case .priv:    privTab
         }
@@ -247,6 +249,10 @@ struct ParleySettingsView: View {
 
     @State private var apiKey = ""
     @State private var modelText = ""
+    @State private var tgToken = ""
+    @State private var tgChat = ""
+    @State private var tgTest = ""   // "" idle · "…" testing · "ok" · error text
+    @State private var calAuth = false
 
     private var llmTab: some View {
         let p = store.llmProvider
@@ -344,6 +350,80 @@ struct ParleySettingsView: View {
             .frame(width: 320, height: 32).padding(.horizontal, 10)
             .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: PRadius.control))
             .overlay(RoundedRectangle(cornerRadius: PRadius.control).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+    }
+
+    // MARK: Интеграции
+
+    private var integrationsTab: some View {
+        VStack(alignment: .leading, spacing: PSpace.l) {
+            head(L("Интеграции", "Integrations"),
+                 L("Доставка тезисов и протоколов наружу. Уходит только текст, каждый канал — по вашему действию.",
+                   "Deliver theses and minutes. Only text goes out, per your action."))
+            group(L("Telegram", "Telegram"),
+                  footnote: L("Создайте бота у @BotFather, вставьте токен. Chat ID — узнать у @userinfobot (личный) или использовать ID канала, где бот — админ. Токен хранится в Keychain. Сообщения бота проходят через облако Telegram (не E2E).",
+                              "Create a bot with @BotFather and paste the token. Get the chat ID from @userinfobot (personal), or a channel ID where the bot is an admin. The token is stored in the Keychain. Bot messages go through Telegram's cloud (not E2E).")) {
+                PRow(L("Токен бота", "Bot token")) {
+                    SecureField("123456:ABC-DEF…", text: $tgToken)
+                        .textFieldStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pInk1)
+                        .frame(width: 320, height: 32).padding(.horizontal, 10)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: PRadius.control))
+                        .overlay(RoundedRectangle(cornerRadius: PRadius.control).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+                        .onChange(of: tgToken) { _, v in Telegram.setToken(v); tgTest = "" }
+                }
+                PDivider()
+                PRow(L("Chat ID", "Chat ID")) {
+                    HStack(spacing: 10) {
+                        fieldInput($tgChat, "-1001234567890")
+                            .onChange(of: tgChat) { _, v in Telegram.setChatId(v); tgTest = "" }
+                    }
+                }
+                PDivider()
+                PRow(L("Проверка", "Test")) {
+                    HStack(spacing: 10) {
+                        Button(L("Отправить тест", "Send test")) { runTelegramTest() }
+                            .buttonStyle(PBorderedButtonStyle()).disabled(!Telegram.isConfigured || tgTest == "…")
+                        telegramTestStatus
+                    }
+                }
+            }
+            group(L("Календарь", "Calendar"),
+                  footnote: L("Добавьте Яндекс-календарь в macOS (Системные настройки → Интернет-аккаунты → CalDAV: caldav.yandex.ru, пароль приложения). ZVON возьмёт название встречи и участников — читается локально, ничего не отправляется.",
+                              "Add your Yandex calendar to macOS (System Settings → Internet Accounts → CalDAV: caldav.yandex.ru, app-password). ZVON reads the meeting title and attendees — locally, nothing is sent.")) {
+                PRow(L("Называть запись по встрече из календаря", "Name recordings from the calendar")) {
+                    ParleyToggle(on: $store.calendarEnabled)
+                }
+                PDivider()
+                PRow(L("Доступ к календарю", "Calendar access")) {
+                    if calAuth {
+                        Label(L("Разрешён", "Granted"), systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
+                    } else {
+                        Button(L("Разрешить", "Grant")) { requestCalendar() }.buttonStyle(PBorderedButtonStyle())
+                    }
+                }
+            }
+        }
+        .onAppear { tgToken = Telegram.token; tgChat = Telegram.chatId; calAuth = CalendarService.shared.authorized }
+    }
+
+    private func requestCalendar() {
+        Task { let ok = await CalendarService.shared.requestAccess(); await MainActor.run { calAuth = ok } }
+    }
+
+    @ViewBuilder private var telegramTestStatus: some View {
+        switch tgTest {
+        case "": EmptyView()
+        case "…": PSpinner(size: 14)
+        case "ok": Label(L("Отправлено", "Sent"), systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
+        default: Text(tgTest).font(.system(size: 11)).foregroundStyle(Color.pDanger).lineLimit(2).frame(maxWidth: 280)
+        }
+    }
+
+    private func runTelegramTest() {
+        tgTest = "…"
+        Task {
+            do { try await Telegram.test(); await MainActor.run { tgTest = "ok" } }
+            catch { await MainActor.run { tgTest = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription } }
+        }
     }
 
     // MARK: Аудио
