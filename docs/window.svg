@@ -41,14 +41,18 @@
     <rect x="196" y="243" width="26" height="18" rx="9" fill="#00C4C4"/>
     <text x="209" y="256" text-anchor="middle" font-size="11.5" font-weight="600" fill="#04201F">7</text>
 
-    <path d="M30 276 l-6 11 h4.5 l-2.5 9 8.5 -13 h-4.5 z" fill="#7D8B89"/>
-    <text x="47" y="290" font-size="13.5" fill="#C3CECC">Команды</text>
-    <text x="214" y="290" text-anchor="end" font-size="12" fill="#6C7A78">3</text>
+    <g fill="#7D8B89"><rect x="23" y="278" width="6" height="6" rx="1.5"/><rect x="31" y="278" width="6" height="6" rx="1.5"/><rect x="23" y="286" width="6" height="6" rx="1.5"/><rect x="31" y="286" width="6" height="6" rx="1.5"/></g>
+    <text x="47" y="290" font-size="13.5" fill="#C3CECC">Пространства</text>
+    <text x="214" y="290" text-anchor="end" font-size="12" fill="#6C7A78">2</text>
 
-    <rect x="24" y="312" width="13" height="12" rx="2" fill="none" stroke="#7D8B89" stroke-width="1.5"/>
-    <line x1="27.5" y1="311" x2="27.5" y2="325" stroke="#7D8B89" stroke-width="1.5"/>
-    <text x="47" y="322" font-size="13.5" fill="#C3CECC">Словарь</text>
-    <text x="214" y="322" text-anchor="end" font-size="12" fill="#6C7A78">3</text>
+    <path d="M30 310 l-6 11 h4.5 l-2.5 9 8.5 -13 h-4.5 z" fill="#7D8B89"/>
+    <text x="47" y="324" font-size="13.5" fill="#C3CECC">Команды</text>
+    <text x="214" y="324" text-anchor="end" font-size="12" fill="#6C7A78">5</text>
+
+    <rect x="24" y="346" width="13" height="12" rx="2" fill="none" stroke="#7D8B89" stroke-width="1.5"/>
+    <line x1="27.5" y1="345" x2="27.5" y2="359" stroke="#7D8B89" stroke-width="1.5"/>
+    <text x="47" y="356" font-size="13.5" fill="#C3CECC">Словарь</text>
+    <text x="214" y="356" text-anchor="end" font-size="12" fill="#6C7A78">3</text>
 
     <rect x="12" y="506" width="214" height="46" rx="8" fill="#111A19" stroke="#1C2726"/>
     <circle cx="26" cy="522" r="3.5" fill="#00C4C4"/>

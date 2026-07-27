@@ -28,6 +28,8 @@ ZVON — это одно окно и один плавающий виджет, �
 - **Задачи только по голосу** — задача появляется, только когда вы произнесли триггер; никакой фоновой генерации из саммари.
 - **Диктовка** — глобальный хоткей, вставка в курсор, опциональная AI-причёска текста.
 - **Команды голосом** — «открой почту» / «запусти VPN» → сайт (в браузере по умолчанию), приложение или Shortcut. Реестр алиасов в отдельной вкладке, матч локальный и мгновенный.
+- **Пространства** — группировка встреч в проекты; статистика, роллапы решений и задач, поиск по группе и LLM-дайджест «саммари по саммари».
+- **Интеграции** — доставка итогов в Telegram, авто-название записи из Яндекс.Календаря и радар «идёт встреча → записать».
 - **Словарь, рецепты, вопросы по встрече и по всему архиву.**
 
 > Целевой продукт собирается как **`ZVON.app`** (`PRODUCT_NAME=ZVON`), хотя проект и схема XcodeGen называются `Parley`, а bundle id — `com.parley.app`. Marketing version `0.1.0`, минимум macOS `14.0`.
@@ -44,6 +46,8 @@ ZVON — это одно окно и один плавающий виджет, �
 | **Рецепты** | Сохранённые prompt-линзы над материалами встречи: Письмо-follow-up, Протокол, Тезисы в Telegram, Черновик ТЗ/PRD, Разбор звонка. Кастомные рецепты, `temp 0.35`. | 5 встроенных |
 | **Вопросы** | `ask()` (⌘K) — строго по текущей встрече, «честно скажи» если ответа нет. `askArchive()` — по всему архиву через keyword+recency (без эмбеддингов), один LLM-вызов с цитированием источника. | — |
 | **Команды** | Голосом «открой …/запусти …» → открыть сайт (браузер по умолчанию) / приложение / Shortcut. Реестр алиасов, детерминированный локальный матч (без LLM), срабатывает только на короткой реплике с глаголом-первым-словом. | вкладка «Команды» |
+| **Пространства** | Группировка встреч в проекты (метки, many-to-many). Таймлайн, роллапы Решения/Задачи, поиск внутри группы, полоса статистики (встреч · суммарная длительность · период) и LLM-дайджест «саммари по саммари» — кэшируется в пространстве, копируется одной кнопкой. | вкладка «Пространства» |
+| **Интеграции** | Telegram-бот (токен в Keychain) шлёт итоги и рецепты; Яндекс.Календарь читается через EventKit (CalDAV-аккаунт) и авто-называет запись; фоновый радар оценивает события (join-ссылка/участники важнее блокеров) и предлагает записать идущий звонок. | вкладка «Интеграции» |
 
 **AI-причёска диктовки** (`aiDictationEnabled`, **выключена** по умолчанию): `polishDictation` убирает слова-паразиты, применяет устные самокоррекции и команды удаления, переводит проговорённую пунктуацию в символы, нормализует числа/проценты/деньги/время (`250 000 ₽`, `15 %`, `15:00`). Жёсткий таймаут **6 c** — при срыве возвращается сырой текст, диктовка никогда не виснет.
 
@@ -81,6 +85,7 @@ ZVON — это одно окно и один плавающий виджет, �
 | Захват аудио | WhisperKit `AudioProcessor` (микрофон) + Core Audio process tap (система) |
 | Хоткеи | KeyboardShortcuts `≥ 1.9.0` |
 | LLM | актор `LLMClient` — OpenAI-совместимый + Anthropic; таймаут 45 с, ретрай 3× с backoff |
+| Хранилище | SQLite (системный `SQLite3`, ноль зависимостей) — история записей с индексом по дате, без лимита; интеграции: Telegram Bot API, EventKit (Календарь) |
 | Сборка | XcodeGen (`project.yml` → `Parley.xcodeproj`) |
 
 WhisperKit — SPM-зависимость, но **не** живой транскрайбер: рантайм-движок это Parakeet (WhisperKit только захватывает микрофон и даёт опциональный загрузчик Whisper-моделей). Бэкенд вычислений не фиксируется в коде — `AsrManager(config: .default)` оставляет выбор compute-юнита на FluidAudio. Мульти-провайдер `LLMProvider`: `openai · anthropic · local · hf · custom`. Toolchain — 6.2 в language mode 5 (чтобы ослабить strict concurrency).
@@ -137,6 +142,8 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 - **Tasks by voice only** — a task appears only when you say a trigger; no ambient generation from the summary.
 - **Dictation** — a global hotkey, insert-at-cursor, optional AI cleanup of the text.
 - **Voice commands** — “открой почту” / “запусти VPN” → open a site (in the default browser), an app, or a Shortcut. An alias registry in its own tab; matching is local and instant.
+- **Spaces** — group meetings into projects; statistics, decision/task rollups, in-space search, and an LLM “summary of summaries” digest.
+- **Integrations** — deliver summaries to Telegram, auto-title recordings from Yandex Calendar, and a “meeting in progress → record” radar.
 - **Glossary, recipes, questions about the meeting and across the whole archive.**
 
 > The shipped product builds as **`ZVON.app`** (`PRODUCT_NAME=ZVON`), even though the XcodeGen project and scheme are named `Parley` and the bundle id is `com.parley.app`. Marketing version `0.1.0`, minimum macOS `14.0`.
@@ -153,6 +160,8 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 | **Recipes** | Saved prompt lenses over the meeting material: follow-up email, minutes, Telegram digest, PRD draft, call review. Custom recipes, `temp 0.35`. | 5 built-in |
 | **Questions** | `ask()` (⌘K) — strictly about the current meeting, “say so honestly” if there’s no answer. `askArchive()` — across the whole archive via keyword + recency (no embeddings), one LLM call that cites its source. | — |
 | **Commands** | By voice “открой …/запусти …” → open a site (default browser) / app / Shortcut. Alias registry, deterministic local match (no LLM), fires only on a short utterance whose first word is a verb. | Commands tab |
+| **Spaces** | Group meetings into projects (labels, many-to-many). Timeline, Decisions/Tasks rollups, in-space search, a statistics strip (meetings · total duration · span) and an LLM “summary of summaries” digest — cached on the space, copyable in one click. | Spaces tab |
+| **Integrations** | A Telegram bot (token in the Keychain) sends summaries and recipes; Yandex Calendar is read via EventKit (a CalDAV account) to auto-title recordings; a background radar scores events (join-link/attendees over blockers) and offers to record an ongoing call. | Integrations tab |
 
 **Dictation cleanup** (`aiDictationEnabled`, **off** by default): `polishDictation` removes filler words, applies spoken self-corrections and delete commands, turns spoken punctuation into symbols, normalises numbers/percentages/money/time (`250 000 ₽`, `15 %`, `15:00`). A hard **6 s** timeout — on any stall it returns the raw text, so dictation never hangs.
 
@@ -190,6 +199,7 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 | Audio capture | WhisperKit `AudioProcessor` (microphone) + Core Audio process tap (system) |
 | Hotkeys | KeyboardShortcuts `≥ 1.9.0` |
 | LLM | the `LLMClient` actor — OpenAI-compatible + Anthropic; 45 s timeout, 3× retry with backoff |
+| Storage | SQLite (system `SQLite3`, zero deps) — recording history indexed by date, no cap; integrations: Telegram Bot API, EventKit (Calendar) |
 | Build | XcodeGen (`project.yml` → `Parley.xcodeproj`) |
 
 WhisperKit is an SPM dependency but **not** the live transcriber — the runtime engine is Parakeet (WhisperKit only captures the mic and offers an optional Whisper-model downloader). The compute backend isn’t pinned in code: `AsrManager(config: .default)` leaves the compute unit to FluidAudio. Multi-provider `LLMProvider`: `openai · anthropic · local · hf · custom`. Toolchain is the 6.2 toolchain in Swift language mode 5 (to relax strict concurrency).
