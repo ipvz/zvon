@@ -28,7 +28,7 @@ ZVON — это одно окно и один плавающий виджет, �
 - **Задачи только по голосу** — задача появляется, только когда вы произнесли триггер; никакой фоновой генерации из саммари.
 - **Диктовка** — глобальный хоткей, вставка в курсор, опциональная AI-причёска текста.
 - **Команды голосом** — «открой почту» / «запусти VPN» → сайт (в браузере по умолчанию), приложение или Shortcut. Реестр алиасов в отдельной вкладке, матч локальный и мгновенный.
-- **Пространства** — группировка встреч в проекты; статистика, роллапы решений и задач, поиск по группе и LLM-дайджест «саммари по саммари».
+- **Пространства** — группировка встреч в проекты; статистика, роллапы решений и задач, поиск, LLM-дайджест «саммари по саммари» и вопросы по всей группе с цитатами.
 - **Интеграции** — доставка итогов в Telegram, авто-название записи из Яндекс.Календаря и радар «идёт встреча → записать».
 - **Словарь, рецепты, вопросы по встрече и по всему архиву.**
 
@@ -46,7 +46,7 @@ ZVON — это одно окно и один плавающий виджет, �
 | **Рецепты** | Сохранённые prompt-линзы над материалами встречи: Письмо-follow-up, Протокол, Тезисы в Telegram, Черновик ТЗ/PRD, Разбор звонка. Кастомные рецепты, `temp 0.35`. | 5 встроенных |
 | **Вопросы** | `ask()` (⌘K) — строго по текущей встрече, «честно скажи» если ответа нет. `askArchive()` — по всему архиву через keyword+recency (без эмбеддингов), один LLM-вызов с цитированием источника. | — |
 | **Команды** | Голосом «открой …/запусти …» → открыть сайт (браузер по умолчанию) / приложение / Shortcut. Реестр алиасов, детерминированный локальный матч (без LLM), срабатывает только на короткой реплике с глаголом-первым-словом. | вкладка «Команды» |
-| **Пространства** | Группировка встреч в проекты (метки, many-to-many). Таймлайн, роллапы Решения/Задачи, поиск внутри группы, полоса статистики (встреч · суммарная длительность · период) и LLM-дайджест «саммари по саммари» — кэшируется в пространстве, копируется одной кнопкой. | вкладка «Пространства» |
+| **Пространства** | Группировка встреч в проекты (метки, many-to-many). Таймлайн, роллапы Решения/Задачи, поиск внутри группы, полоса статистики (встреч · суммарная длительность · период), LLM-дайджест «саммари по саммари» (кэш + копирование) и **вопросы по группе** — scoped-версия `askArchive` с цитатами-источниками. | вкладка «Пространства» |
 | **Интеграции** | Telegram-бот (токен в Keychain) шлёт итоги и рецепты; Яндекс.Календарь читается через EventKit (CalDAV-аккаунт) и авто-называет запись; фоновый радар оценивает события (join-ссылка/участники важнее блокеров) и предлагает записать идущий звонок. | вкладка «Интеграции» |
 
 **AI-причёска диктовки** (`aiDictationEnabled`, **выключена** по умолчанию): `polishDictation` убирает слова-паразиты, применяет устные самокоррекции и команды удаления, переводит проговорённую пунктуацию в символы, нормализует числа/проценты/деньги/время (`250 000 ₽`, `15 %`, `15:00`). Жёсткий таймаут **6 c** — при срыве возвращается сырой текст, диктовка никогда не виснет.
@@ -142,7 +142,7 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 - **Tasks by voice only** — a task appears only when you say a trigger; no ambient generation from the summary.
 - **Dictation** — a global hotkey, insert-at-cursor, optional AI cleanup of the text.
 - **Voice commands** — “открой почту” / “запусти VPN” → open a site (in the default browser), an app, or a Shortcut. An alias registry in its own tab; matching is local and instant.
-- **Spaces** — group meetings into projects; statistics, decision/task rollups, in-space search, and an LLM “summary of summaries” digest.
+- **Spaces** — group meetings into projects; statistics, decision/task rollups, in-space search, an LLM “summary of summaries” digest, and questions across the whole group with cited sources.
 - **Integrations** — deliver summaries to Telegram, auto-title recordings from Yandex Calendar, and a “meeting in progress → record” radar.
 - **Glossary, recipes, questions about the meeting and across the whole archive.**
 
@@ -160,7 +160,7 @@ ZVON is one window and one floating widget that cover the whole arc of a meeting
 | **Recipes** | Saved prompt lenses over the meeting material: follow-up email, minutes, Telegram digest, PRD draft, call review. Custom recipes, `temp 0.35`. | 5 built-in |
 | **Questions** | `ask()` (⌘K) — strictly about the current meeting, “say so honestly” if there’s no answer. `askArchive()` — across the whole archive via keyword + recency (no embeddings), one LLM call that cites its source. | — |
 | **Commands** | By voice “открой …/запусти …” → open a site (default browser) / app / Shortcut. Alias registry, deterministic local match (no LLM), fires only on a short utterance whose first word is a verb. | Commands tab |
-| **Spaces** | Group meetings into projects (labels, many-to-many). Timeline, Decisions/Tasks rollups, in-space search, a statistics strip (meetings · total duration · span) and an LLM “summary of summaries” digest — cached on the space, copyable in one click. | Spaces tab |
+| **Spaces** | Group meetings into projects (labels, many-to-many). Timeline, Decisions/Tasks rollups, in-space search, a statistics strip (meetings · total duration · span), an LLM “summary of summaries” digest (cached + copyable), and **questions across the group** — a scoped `askArchive` that cites its sources. | Spaces tab |
 | **Integrations** | A Telegram bot (token in the Keychain) sends summaries and recipes; Yandex Calendar is read via EventKit (a CalDAV account) to auto-title recordings; a background radar scores events (join-link/attendees over blockers) and offers to record an ongoing call. | Integrations tab |
 
 **Dictation cleanup** (`aiDictationEnabled`, **off** by default): `polishDictation` removes filler words, applies spoken self-corrections and delete commands, turns spoken punctuation into symbols, normalises numbers/percentages/money/time (`250 000 ₽`, `15 %`, `15:00`). A hard **6 s** timeout — on any stall it returns the raw text, so dictation never hangs.
