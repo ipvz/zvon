@@ -38,8 +38,8 @@ final class SessionStore: ObservableObject {
     static let shared = SessionStore()
     @Published private(set) var sessions: [SessionRecord] = []
 
-    private static let key = "sessions"
-    private static let limit = 300
+    private static let key = "sessions"   // legacy UserDefaults blob — read once for migration, then left as backup
+    private let db: SessionDB?
 
     static let time: DateFormatter = {
         let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "HH:mm"; return f
@@ -48,7 +48,11 @@ final class SessionStore: ObservableObject {
         let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM"; return f
     }()
 
-    init() { load() }
+    init() {
+        db = SessionDB(path: Self.dbURL().path)
+        migrateFromUserDefaultsIfNeeded()
+        sessions = db?.all() ?? Self.legacyLoad()   // SQLite is source of truth; fall back to the old blob only if the DB failed to open
+    }
 
     // MARK: Add
 
@@ -66,13 +70,15 @@ final class SessionStore: ObservableObject {
 
     func remove(_ id: UUID) {
         sessions.removeAll { $0.id == id }
-        save()
+        db?.delete(id)
+        SpaceStore.shared.purge(meeting: id)   // drop it from any space it was tagged into
     }
 
+    /// No cap: SQLite scales to tens of thousands of rows, and a single-row INSERT is cheap (unlike
+    /// re-serialising the whole array). A flood of dictations can never again evict meetings.
     private func insert(_ record: SessionRecord) {
         sessions.insert(record, at: 0)
-        if sessions.count > Self.limit { sessions.removeLast(sessions.count - Self.limit) }
-        save()
+        db?.insert(record)
     }
 
     // MARK: Query
@@ -106,17 +112,29 @@ final class SessionStore: ObservableObject {
         return day.string(from: date)
     }
 
-    // MARK: Persistence (JSON in UserDefaults — fine for this volume)
+    // MARK: Persistence (SQLite — see SessionDB)
 
-    private func load() {
-        guard let data = UserDefaults.standard.data(forKey: Self.key),
-              let items = try? JSONDecoder().decode([SessionRecord].self, from: data) else { return }
-        sessions = items
+    private static func dbURL() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        let dir = base.appendingPathComponent("ZVON", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("sessions.sqlite")
     }
 
-    private func save() {
-        if let data = try? JSONEncoder().encode(sessions) {
-            UserDefaults.standard.set(data, forKey: Self.key)
-        }
+    private static func legacyLoad() -> [SessionRecord] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let items = try? JSONDecoder().decode([SessionRecord].self, from: data) else { return [] }
+        return items
+    }
+
+    /// One-time lift of the old UserDefaults blob into SQLite. The blob is left in place as a backup —
+    /// harmless, and the only copy of pre-migration data.
+    private func migrateFromUserDefaultsIfNeeded() {
+        guard let db, db.isEmpty else { return }
+        let legacy = Self.legacyLoad()
+        guard !legacy.isEmpty else { return }
+        for r in legacy { db.insert(r) }
+        DebugLog.log("SessionStore: migrated \(legacy.count) records from UserDefaults → SQLite")
     }
 }
