@@ -12,8 +12,11 @@ struct MeetingView: View {
     @ObservedObject private var taskStore = TaskStore.shared
     @ObservedObject private var glossary = GlossaryStore.shared
     @ObservedObject private var commandStore = CommandStore.shared
+    @ObservedObject private var spaceStore = SpaceStore.shared
     @State private var search = ""
     @State private var selectedId: UUID?
+    @State private var selectedSpaceId: UUID?
+    @State private var newSpaceForMeeting: UUID?    // record context-menu → «Новое пространство…»
     @State private var mainView: MainView = .meeting
     @State private var showingSettings = false
     @State private var showShare = false
@@ -32,6 +35,49 @@ struct MeetingView: View {
     /// Записи is the 3-column home (list + detail); .meeting is an alias kept for existing callers.
     private var atHome: Bool { mainView == .records || mainView == .meeting }
 
+    /// Пространства pane: grid overview, or one space's detail when selected.
+    @ViewBuilder private var spacesPane: some View {
+        if let sid = selectedSpaceId, spaceStore.space(sid) != nil {
+            SpaceDetailView(spaceId: sid,
+                            onOpenMeeting: { id in selectedSpaceId = nil; selectedId = id; mainView = .records },
+                            onBack: { selectedSpaceId = nil })
+        } else {
+            SpacesView(onOpen: { selectedSpaceId = $0 })
+        }
+    }
+
+    /// Calendar radar: an ongoing meeting/call is detected → offer one-tap record, pre-named from the event.
+    @ViewBuilder private func radarBanner(_ m: CalendarEvent) -> some View {
+        HStack(spacing: 11) {
+            Circle().fill(Color.pRecording).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(L("Идёт встреча", "Meeting in progress"))
+                    .font(.system(size: 10.5, weight: .medium)).foregroundStyle(Color.pInk3)
+                Text(m.title)
+                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.pInk1)
+                    .lineLimit(1).truncationMode(.tail)
+            }
+            Spacer(minLength: 14)
+            Button { store.recordSuggestedMeeting() } label: {
+                Text(L("Записать", "Record"))
+                    .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                    .padding(.horizontal, 14).frame(height: 30)
+                    .background(Color.pAccent).clipShape(Capsule())
+            }.buttonStyle(.plain)
+            Button { store.dismissSuggestedMeeting() } label: {
+                Image(systemName: "xmark").font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(Color.pInk3).frame(width: 26, height: 26).contentShape(Rectangle())
+            }.buttonStyle(.plain)
+        }
+        .padding(.leading, 14).padding(.trailing, 8).padding(.vertical, 8)
+        .frame(maxWidth: 380)
+        .background(Color.pCard, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.pLine, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+        .padding(.top, 48).padding(.trailing, 18)   // clear the traffic-light band
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
     var body: some View {
         Group {
             if showingSettings {
@@ -47,13 +93,21 @@ struct MeetingView: View {
                         GlossaryView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else if mainView == .commands {
                         CommandsView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
+                    } else if mainView == .spaces {
+                        spacesPane.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else {
                         recordsColumn             // 308
                         detailColumn              // remainder (min 420)
                     }
                 }
+                .overlay(alignment: .topTrailing) {
+                    if let m = store.suggestedMeeting, !store.isRecording {
+                        radarBanner(m)
+                    }
+                }
             }
         }
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.suggestedMeeting?.key)
         .frame(minWidth: 1040, minHeight: 640)
         .background(Color.pCanvas)
         .background(WindowConfigurator())   // full-size content so the shell reaches the top
@@ -86,6 +140,12 @@ struct MeetingView: View {
         }
         .sheet(isPresented: $showRecipes) {
             RecipesSheet(store: store, material: { meetingMaterial() }, onClose: { showRecipes = false })
+        }
+        // Record context-menu → «Новое пространство…»: create it, then drop this record straight in.
+        .sheet(isPresented: Binding(get: { newSpaceForMeeting != nil }, set: { if !$0 { newSpaceForMeeting = nil } })) {
+            SpaceEditor(space: nil, onCreated: { sp in
+                if let mid = newSpaceForMeeting { spaceStore.add(meeting: mid, to: sp.id) }
+            })
         }
     }
 
@@ -225,9 +285,49 @@ struct MeetingView: View {
 
     private var navSection: some View {
         VStack(spacing: 2) {
-            navRow(.records); navRow(.tasks); navRow(.commands); navRow(.gloss)
+            navRow(.records); navRow(.tasks)
+            spacesNav
+            navRow(.commands); navRow(.gloss)
         }
         .padding(.horizontal, 12).padding(.top, 16)
+    }
+
+    /// «Пространства» — a nav row that opens the grid, plus an inline list of spaces for quick jump.
+    @ViewBuilder private var spacesNav: some View {
+        let atSpaces = mainView == .spaces
+        Button { mainView = .spaces; selectedSpaceId = nil } label: {
+            HStack(spacing: 10) {
+                Image(systemName: MainView.spaces.icon).font(.system(size: 12))
+                    .foregroundStyle(atSpaces ? Color.pAccent : Color.pInk2).frame(width: 16)
+                Text(MainView.spaces.title).font(.system(size: 13.5, weight: atSpaces ? .medium : .regular))
+                    .foregroundStyle(atSpaces ? Color.pAccent : Color.pInk1)
+                Spacer()
+                if spaceStore.spaces.count > 0 {
+                    Text("\(spaceStore.spaces.count)").font(.system(size: 12)).foregroundStyle(Color.pInk3)
+                }
+            }
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 7).fill(atSpaces && selectedSpaceId == nil ? Color.pAccent.opacity(0.14) : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+
+        ForEach(spaceStore.spaces) { sp in
+            let on = atSpaces && selectedSpaceId == sp.id
+            Button { mainView = .spaces; selectedSpaceId = sp.id } label: {
+                HStack(spacing: 8) {
+                    Circle().fill(spaceColor(sp.colorHex)).frame(width: 7, height: 7)
+                    Text(sp.name).font(.system(size: 12.5, weight: on ? .medium : .regular))
+                        .foregroundStyle(on ? Color.pAccent : Color.pInk2).lineLimit(1)
+                    Spacer(minLength: 6)
+                    Text("\(sp.meetingIds.count)").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                }
+                .padding(.leading, 26).padding(.trailing, 10).frame(height: 28)
+                .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.pAccent.opacity(0.1) : Color.clear))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     /// A sidebar nav row (spec §2.4): active = teal wash + #4FE0E0 text; a right-hand count/badge.
@@ -318,7 +418,7 @@ struct MeetingView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Circle().fill(Color.pRecording).frame(width: 7, height: 7)
-                    Text(store.notes.topics.first ?? L("Новая запись", "New recording"))
+                    Text(store.meetingTitle ?? store.notes.topics.first ?? L("Новая запись", "New recording"))
                         .font(.system(size: 13.5, weight: .medium)).foregroundStyle(Color.pInk1).lineLimit(1)
                 }
                 HStack(spacing: 4) {
@@ -354,6 +454,22 @@ struct MeetingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu { spaceMenu(for: s) }
+    }
+
+    /// Record right-click → toggle membership in each space, or spin up a new one seeded with this record.
+    @ViewBuilder private func spaceMenu(for s: SessionRecord) -> some View {
+        Section(L("В пространство", "Add to space")) {
+            ForEach(spaceStore.spaces) { sp in
+                Button {
+                    spaceStore.toggle(meeting: s.id, in: sp.id)
+                } label: {
+                    if spaceStore.contains(sp.id, meeting: s.id) { Label(sp.name, systemImage: "checkmark") }
+                    else { Text(sp.name) }
+                }
+            }
+            Button(L("Новое пространство…", "New space…")) { newSpaceForMeeting = s.id }
+        }
     }
 
     private func recordMeta(_ s: SessionRecord) -> String {
@@ -383,7 +499,7 @@ struct MeetingView: View {
 
     private var detailTitleText: String {
         if viewingPast, let s = selected { return s.kind == .dictation ? L("Диктовка", "Dictation") : s.title }
-        if store.isRecording { return store.notes.topics.first ?? L("Идёт запись", "Recording") }
+        if store.isRecording { return store.meetingTitle ?? store.notes.topics.first ?? L("Идёт запись", "Recording") }
         return L("Нет выбранной записи", "No record selected")
     }
     private var detailMetaText: String {
@@ -599,7 +715,7 @@ struct MeetingView: View {
                 HStack(spacing: 6) {
                     Circle().fill(Color.pRecording).frame(width: 6, height: 6)   // live recording = red
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(store.notes.topics.first ?? L("Новая запись", "New recording")).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
+                        Text(store.meetingTitle ?? store.notes.topics.first ?? L("Новая запись", "New recording")).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
                         if let s = store.recordingStartedAt {
                             HStack(spacing: 4) {
                                 Text(store.isPaused ? L("На паузе ·", "Paused ·") : L("Идёт запись ·", "Recording ·")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
@@ -692,7 +808,7 @@ struct MeetingView: View {
     private var paneTitle: String {
         if mainView != .meeting { return mainView.title }
         if viewingPast, let s = selected { return s.kind == .dictation ? L("Диктовка", "Dictation") : s.title }
-        if store.isRecording { return store.notes.topics.first ?? L("Идёт запись", "Recording") }
+        if store.isRecording { return store.meetingTitle ?? store.notes.topics.first ?? L("Идёт запись", "Recording") }
         return L("Готово к записи", "Ready to record")
     }
     private var paneSubtitle: String {
@@ -708,6 +824,7 @@ struct MeetingView: View {
             return L("\(sessions.sessions.count) записей · \(store.totalDictatedWords) слов надиктовано", "\(sessions.sessions.count) records · \(store.totalDictatedWords) words dictated")
         case .gloss: return L("\(glossary.terms.count) терминов", "\(glossary.terms.count) terms")
         case .commands: return L("\(CommandStore.shared.commands.count) команд", "\(CommandStore.shared.commands.count) commands")
+        case .spaces: return L("\(spaceStore.spaces.count) пространств", "\(spaceStore.spaces.count) spaces")
         }
     }
 
@@ -720,6 +837,7 @@ struct MeetingView: View {
         case .records: RecordsView(store: store) { id in selectedId = id; mainView = .meeting }
         case .gloss:   GlossaryView()
         case .commands: CommandsView()
+        case .spaces:  spacesPane
         }
     }
 
@@ -1083,7 +1201,7 @@ struct MeetingView: View {
         let parts = Array(Set(store.lines.map(\.speaker.title))).sorted()
         let turns = store.lines.map { MeetingExport.Turn(role: $0.speaker.title, text: $0.text) }
         let tasks = taskStore.forSession(store.currentSessionId).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
-        return MeetingExport(title: store.notes.topics.first ?? L("Встреча", "Meeting"),
+        return MeetingExport(title: store.meetingTitle ?? store.notes.topics.first ?? L("Встреча", "Meeting"),
                              date: store.recordingStartedAt ?? Date(),
                              durationSec: store.recordingStartedAt.map { Date().timeIntervalSince($0) },
                              participants: parts, summary: store.notes.summary, decisions: store.notes.decisions,

@@ -34,6 +34,11 @@ final class TranscriptStore: ObservableObject {
     private var segmentBaseSec: Double = 0
     private var segmentStartedAt: Date?
 
+    // Calendar context (from EventKit; a Yandex CalDAV account surfaces here too)
+    @Published var meetingTitle: String?         // auto-title from the current calendar event
+    var currentEvent: CalendarEvent?             // attendees + join link for the live session
+    @Published var calendarEnabled = true { didSet { UserDefaults.standard.set(calendarEnabled, forKey: "calendarEnabled") } }
+
     // Live LLM notes
     @Published var notes = MeetingNotes()
     @Published var notesGenerating = false
@@ -154,6 +159,7 @@ final class TranscriptStore: ObservableObject {
         aiTranscriptRepairEnabled = d.bool(forKey: "aiTranscriptRepairEnabled")   // off by default (opt-in)
         totalDictatedWords = d.integer(forKey: "totalDictatedWords")
         onboardingDone = d.bool(forKey: "onboardingDone")
+        calendarEnabled = d.object(forKey: "calendarEnabled") == nil ? true : d.bool(forKey: "calendarEnabled")
 
         pipeline = SpeechPipeline(
             onStatus: { [weak self] status in
@@ -480,6 +486,52 @@ final class TranscriptStore: ObservableObject {
 
     /// NL question over the WHOLE archive (lightweight: keyword+recency retrieval over stored sessions
     /// → compact summaries → one offloaded LLM call with citations). No embeddings, no local model.
+    // MARK: - Space digest ("summary of summaries")
+
+    @Published var spaceSummarizing: Set<UUID> = []
+    @Published var spaceSummaryError: [UUID: String] = [:]
+
+    /// Roll every member meeting's summary + decisions into one project digest via the LLM, cached on the Space.
+    func summarizeSpace(_ id: UUID) {
+        guard !spaceSummarizing.contains(id), let sp = SpaceStore.shared.space(id) else { return }
+        let members = SessionStore.shared.sessions.filter { sp.meetingIds.contains($0.id) }
+        guard !members.isEmpty else { spaceSummaryError[id] = "Нет встреч для сводки."; return }
+
+        let material = members.map { s -> String in
+            let dur = s.durationSec.map { " · \(Int(($0 / 60).rounded())) мин" } ?? ""
+            var b = "## \(s.title) — \(Self.archiveDate.string(from: s.date))\(dur)"
+            let sum = (s.noteSummary ?? []).map { "• \($0)" }.joined(separator: "\n")
+            if !sum.isEmpty { b += "\nИтог:\n\(sum)" }
+            let dec = (s.noteDecisions ?? []).map { "• \($0)" }.joined(separator: "\n")
+            if !dec.isEmpty { b += "\nРешения:\n\(dec)" }
+            return b
+        }.joined(separator: "\n\n")
+
+        let instruction = """
+        Собери ОБЩУЮ СВОДКУ по проекту «\(sp.name)» на основе итогов всех встреч ниже (\(members.count) шт).
+        Разделы: краткое резюме проекта; ключевые темы и прогресс; принятые решения; открытые вопросы и следующие шаги.
+        Пиши сжато, по делу, на языке встреч. Простым текстом с абзацами и списками через тире — без markdown-заголовков и символов #/*.
+        """
+
+        spaceSummaryError[id] = nil
+        spaceSummarizing.insert(id)
+        let cfg = llmConfig()
+        Task { [weak self] in
+            do {
+                let out = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                  style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                    .runRecipe(instruction: instruction, material: material)
+                guard let self else { return }
+                SpaceStore.shared.setSummary(id, out)
+                self.spaceSummarizing.remove(id)
+            } catch {
+                guard let self else { return }
+                self.spaceSummaryError[id] = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+                self.spaceSummarizing.remove(id)
+            }
+        }
+    }
+
     func askArchive(_ question: String) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
@@ -563,6 +615,54 @@ final class TranscriptStore: ObservableObject {
 
     func onAppear() {
         prepareActiveModelIfDownloaded()
+        startMeetingRadar()
+    }
+
+    // MARK: - Meeting radar (calendar-driven "a call is on — record it?" nudge)
+
+    @Published var suggestedMeeting: CalendarEvent?
+    private var dismissedMeetingKey: String?
+    private var pendingMeeting: CalendarEvent?      // event from the radar banner, applied once recording starts
+    private var radarTask: Task<Void, Never>?
+
+    private func startMeetingRadar() {
+        radarTask?.cancel()
+        radarTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkMeetingRadar()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)   // re-check every 60s
+            }
+        }
+    }
+
+    private func checkMeetingRadar() async {
+        guard calendarEnabled, CalendarService.shared.authorized, !isRecording, !isDictating else {
+            suggestedMeeting = nil; return
+        }
+        // Only ongoing, call-like meetings (a join link or invitees) — never a «Занят»/Focus block,
+        // and never one the user already dismissed.
+        guard let ev = await CalendarService.shared.currentOrNext(lookahead: 0),
+              ev.start <= Date(), ev.end > Date(),
+              (ev.isCall || !ev.attendees.isEmpty),
+              ev.key != dismissedMeetingKey else {
+            suggestedMeeting = nil; return
+        }
+        suggestedMeeting = ev
+    }
+
+    func dismissSuggestedMeeting() {
+        dismissedMeetingKey = suggestedMeeting?.key
+        suggestedMeeting = nil
+    }
+
+    /// «Записать» on the radar banner: carry the exact event the user saw into the new recording.
+    /// Stashed in `pendingMeeting` because `start()` resets session state asynchronously inside the
+    /// run task — setting `meetingTitle` here directly would be clobbered by that reset.
+    func recordSuggestedMeeting() {
+        guard let ev = suggestedMeeting, canRecord else { return }
+        suggestedMeeting = nil
+        pendingMeeting = ev
+        start()
     }
 
     private func prepareActiveModelIfDownloaded() {
@@ -638,6 +738,13 @@ final class TranscriptStore: ObservableObject {
             self.dictating = dict
             self.isDictating = dict
             if reset { self.resetSessionState() }
+            if let pm = self.pendingMeeting {           // «Записать» on the radar banner — use that exact event
+                self.pendingMeeting = nil
+                self.meetingTitle = pm.title.isEmpty ? nil : pm.title
+                self.currentEvent = pm
+            } else if !dict {
+                self.fetchCalendarContext()             // non-blocking auto-title from the calendar
+            }
             await self.streamSession()
             await Task.yield()          // let the trailing .final/.ended land on the main actor first
             guard self.stopping else { return }
@@ -654,6 +761,18 @@ final class TranscriptStore: ObservableObject {
         segmentBaseSec = 0
         pendingSegmentAdvance = 0
         currentSessionId = UUID()
+        meetingTitle = nil; currentEvent = nil
+    }
+
+    /// Pull the current/next calendar event (if calendar access is already granted) to auto-title the
+    /// recording + keep its attendees/join-link. Non-blocking; never prompts mid-recording.
+    private func fetchCalendarContext() {
+        guard calendarEnabled, CalendarService.shared.authorized else { return }
+        Task { [weak self] in
+            guard let ev = await CalendarService.shared.currentOrNext(), let self else { return }
+            if !ev.title.isEmpty { self.meetingTitle = ev.title }
+            self.currentEvent = ev
+        }
     }
 
     /// Runs one segment's streams to completion (returns when stop/pause ends them). On failure it
@@ -743,7 +862,7 @@ final class TranscriptStore: ObservableObject {
     private func archiveMeeting() {
         guard !finals.isEmpty else { return }
         let duration = recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let title = notes.topics.first ?? notes.summary.first ?? finals.first?.text ?? "Встреча"
+        let title = meetingTitle ?? notes.topics.first ?? notes.summary.first ?? finals.first?.text ?? "Встреча"
         SessionStore.shared.addMeeting(
             id: currentSessionId,
             title: String(title.prefix(80)),

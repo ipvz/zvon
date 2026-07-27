@@ -2,13 +2,14 @@ import SwiftUI
 
 /// Which view the main pane shows — switched from the sidebar nav (single window).
 enum MainView: String, CaseIterable, Identifiable {
-    case meeting, records, tasks, gloss, commands
+    case meeting, records, tasks, spaces, gloss, commands
     var id: String { rawValue }
     var title: String {
         switch self {
         case .meeting: return L("Встреча", "Meeting")
         case .records: return L("Записи", "Records")
         case .tasks:   return L("Задачи", "Tasks")
+        case .spaces:  return L("Пространства", "Spaces")
         case .gloss:   return L("Словарь", "Glossary")
         case .commands: return L("Команды", "Commands")
         }
@@ -18,6 +19,7 @@ enum MainView: String, CaseIterable, Identifiable {
         case .meeting: return "waveform"
         case .records: return "rectangle.stack"
         case .tasks:   return "checklist"
+        case .spaces:  return "square.grid.2x2"
         case .gloss:   return "character.book.closed"
         case .commands: return "bolt"
         }
@@ -76,7 +78,7 @@ private func groupByDay<T>(_ items: [T], _ date: (T) -> Date) -> [(String, [T])]
     return order.map { ($0, map[$0] ?? []) }
 }
 
-private func libraryColumn<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+func libraryColumn<C: View>(@ViewBuilder _ content: () -> C) -> some View {
     ScrollView {
         VStack(alignment: .leading, spacing: 0) { content() }
             .frame(maxWidth: 680, alignment: .leading)
