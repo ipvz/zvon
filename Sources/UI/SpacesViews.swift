@@ -45,8 +45,8 @@ struct SpacesView: View {
 
     var body: some View {
         libraryColumn {
-            Text(L("Группируй встречи по проектам и клиентам. Потом — общий список решений и задач, а скоро и вопросы по всей группе.",
-                   "Group meetings by project or client. Then get one rolled-up list of decisions and tasks — and soon, questions across the whole group."))
+            Text(L("Группируй встречи по проектам и клиентам. Дальше — сводка, общий список решений и задач и вопросы по всей группе.",
+                   "Group meetings by project or client. Then get a digest, one rolled-up list of decisions and tasks, and questions across the whole group."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk3)
                 .fixedSize(horizontal: false, vertical: true).padding(.bottom, 16)
 
@@ -149,10 +149,11 @@ private struct SpaceCard: View {
 
 // MARK: Detail
 
-private enum SpaceTab: CaseIterable { case summary, meetings, decisions, tasks
+private enum SpaceTab: CaseIterable { case summary, questions, meetings, decisions, tasks
     var title: String {
         switch self {
         case .summary:   return L("Сводка", "Digest")
+        case .questions: return L("Вопросы", "Ask")
         case .meetings:  return L("Встречи", "Meetings")
         case .decisions: return L("Решения", "Decisions")
         case .tasks:     return L("Задачи", "Tasks")
@@ -176,6 +177,7 @@ struct SpaceDetailView: View {
     @State private var picking = false
     @State private var q = ""                            // search within the space
     @State private var copied = false
+    @State private var askText = ""                      // «Вопросы» input
 
     private var space: Space? { store.space(spaceId) }
     private var members: [SessionRecord] {
@@ -214,10 +216,11 @@ struct SpaceDetailView: View {
 
                 tabBar.padding(.bottom, 12)
 
-                if tab != .summary { searchField.padding(.bottom, 12) }
+                if tab == .meetings || tab == .decisions || tab == .tasks { searchField.padding(.bottom, 12) }
 
                 switch tab {
                 case .summary:   summaryTab
+                case .questions: questionsTab
                 case .meetings:  meetingsTab
                 case .decisions: decisionsTab
                 case .tasks:     tasksTab
@@ -366,6 +369,70 @@ struct SpaceDetailView: View {
     private func spaceStamp(_ d: Date) -> String {
         let f = spaceDayFmt; f.locale = Locale(identifier: _uiLang == .en ? "en_US" : "ru_RU")
         return "\(f.string(from: d)), \(SessionStore.time.string(from: d))"
+    }
+
+    // Вопросы (scoped Q&A over the space's meetings, with cited sources) --------
+
+    private var questionsTab: some View {
+        let state = tx.spaceAsks[spaceId]
+        let busy = state?.asking == true
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                TextField(L("Спросить по пространству — «что решили по…»", "Ask this space — \"what did we decide about…\""), text: $askText)
+                    .textFieldStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pInk1)
+                    .frame(height: 34).padding(.horizontal, 12)
+                    .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 9))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.pLine, lineWidth: 1))
+                    .onSubmit(fireAsk)
+                Button(action: fireAsk) {
+                    Text(L("Спросить", "Ask")).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                        .padding(.horizontal, 16).frame(height: 34)
+                        .background(Color.pAccent.opacity(canAsk ? 1 : 0.5)).clipShape(RoundedRectangle(cornerRadius: 9))
+                }.buttonStyle(.plain).disabled(!canAsk)
+            }
+
+            if members.isEmpty {
+                emptyLine(L("Добавьте встречи — и можно будет спрашивать по всей группе.", "Add meetings — then you can ask across the whole group."))
+            }
+            if busy {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(L("Ищу по встречам пространства…", "Searching this space's meetings…")).font(PFont.secondary).foregroundStyle(Color.pInk3)
+                }
+            }
+            if let e = state?.error {
+                Text(e).font(.system(size: 12)).foregroundStyle(Color.pDanger).fixedSize(horizontal: false, vertical: true)
+            }
+            if let answer = state?.answer {
+                GroupCard {
+                    Text(answer).font(.system(size: 13)).foregroundStyle(Color.pInk1).lineSpacing(3)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(14)
+                }
+                if let src = state?.sources, !src.isEmpty {
+                    Text(L("Источники", "Sources")).font(.system(size: 10.5, weight: .medium)).tracking(0.5)
+                        .foregroundStyle(Color.pInk3).padding(.top, 2)
+                    FlowLayout(spacing: 7, lineSpacing: 7) {
+                        ForEach(src) { s in
+                            Button { onOpenMeeting(s.id) } label: {
+                                HStack(spacing: 6) {
+                                    Circle().fill(Color.pAccent).frame(width: 4, height: 4)
+                                    Text(s.title).font(.system(size: 11.5)).foregroundStyle(Color.pInk2).lineLimit(1)
+                                }
+                                .padding(.horizontal, 9).padding(.vertical, 5)
+                                .background(Color.pField).clipShape(Capsule())
+                                .overlay(Capsule().strokeBorder(Color.pLine, lineWidth: 1))
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private var canAsk: Bool { !askText.trimmingCharacters(in: .whitespaces).isEmpty && !members.isEmpty && tx.spaceAsks[spaceId]?.asking != true }
+    private func fireAsk() {
+        guard canAsk else { return }
+        tx.askSpace(spaceId, askText)
     }
 
     private func copyDigest(_ text: String) {

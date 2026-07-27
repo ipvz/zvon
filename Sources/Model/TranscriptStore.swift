@@ -532,6 +532,56 @@ final class TranscriptStore: ObservableObject {
         }
     }
 
+    // MARK: - Ask a space (scoped Q&A over one project's meetings)
+
+    struct SpaceAskState { var answer: String?; var sources: [SessionRecord] = []; var asking = false; var error: String? }
+    @Published var spaceAsks: [UUID: SpaceAskState] = [:]
+
+    /// Same keyword+recency retrieval + cited answer as `askArchive`, but restricted to a space's meetings.
+    func askSpace(_ spaceId: UUID, _ question: String) {
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty, let sp = SpaceStore.shared.space(spaceId) else { return }
+        let members = SessionStore.shared.sessions.filter { sp.meetingIds.contains($0.id) }
+        guard !members.isEmpty else {
+            spaceAsks[spaceId] = SpaceAskState(error: "В пространстве нет встреч для вопросов.")
+            return
+        }
+
+        let terms = q.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count >= 3 }
+        func score(_ s: SessionRecord) -> Int {
+            let head = (s.title + " " + (s.noteSummary?.joined(separator: " ") ?? "")).lowercased()
+            let body = (s.transcript ?? "").lowercased()
+            return terms.reduce(0) { $0 + (head.contains($1) ? 3 : 0) + (body.contains($1) ? 1 : 0) }
+        }
+        let ranked = members.enumerated().map { (i, s) in (s: s, score: score(s), idx: i) }
+            .sorted { $0.score != $1.score ? $0.score > $1.score : $0.idx < $1.idx }
+        var chosen = ranked.filter { $0.score > 0 }.prefix(8).map(\.s)
+        if chosen.isEmpty { chosen = Array(members.prefix(6)) }
+
+        let context = chosen.map { s -> String in
+            let head = "[Встреча: \(s.title) · \(Self.archiveDate.string(from: s.date))]"
+            let sum = (s.noteSummary ?? []).map { "• \($0)" }.joined(separator: "\n")
+            return sum.isEmpty ? head + "\n" + String((s.transcript ?? "").prefix(600)) : head + "\n" + sum
+        }.joined(separator: "\n\n")
+
+        spaceAsks[spaceId] = SpaceAskState(sources: chosen, asking: true)
+        let cfg = llmConfig()
+        Task { [weak self] in
+            do {
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                     style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                    .askArchive(question: q, context: context)
+                guard let self else { return }
+                self.spaceAsks[spaceId]?.answer = answer.isEmpty ? "Пустой ответ модели." : answer
+                self.spaceAsks[spaceId]?.asking = false
+            } catch {
+                guard let self else { return }
+                self.spaceAsks[spaceId]?.error = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+                self.spaceAsks[spaceId]?.asking = false
+            }
+        }
+    }
+
     func askArchive(_ question: String) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
