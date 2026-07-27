@@ -285,55 +285,15 @@ struct MeetingView: View {
 
     private var navSection: some View {
         VStack(spacing: 2) {
-            navRow(.records); navRow(.tasks)
-            spacesNav
-            navRow(.commands); navRow(.gloss)
+            navRow(.records); navRow(.tasks); navRow(.spaces); navRow(.commands); navRow(.gloss)
         }
         .padding(.horizontal, 12).padding(.top, 16)
-    }
-
-    /// «Пространства» — a nav row that opens the grid, plus an inline list of spaces for quick jump.
-    @ViewBuilder private var spacesNav: some View {
-        let atSpaces = mainView == .spaces
-        Button { mainView = .spaces; selectedSpaceId = nil } label: {
-            HStack(spacing: 10) {
-                Image(systemName: MainView.spaces.icon).font(.system(size: 12))
-                    .foregroundStyle(atSpaces ? Color.pAccent : Color.pInk2).frame(width: 16)
-                Text(MainView.spaces.title).font(.system(size: 13.5, weight: atSpaces ? .medium : .regular))
-                    .foregroundStyle(atSpaces ? Color.pAccent : Color.pInk1)
-                Spacer()
-                if spaceStore.spaces.count > 0 {
-                    Text("\(spaceStore.spaces.count)").font(.system(size: 12)).foregroundStyle(Color.pInk3)
-                }
-            }
-            .padding(.horizontal, 10).frame(height: 32)
-            .background(RoundedRectangle(cornerRadius: 7).fill(atSpaces && selectedSpaceId == nil ? Color.pAccent.opacity(0.14) : Color.clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-
-        ForEach(spaceStore.spaces) { sp in
-            let on = atSpaces && selectedSpaceId == sp.id
-            Button { mainView = .spaces; selectedSpaceId = sp.id } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(spaceColor(sp.colorHex)).frame(width: 7, height: 7)
-                    Text(sp.name).font(.system(size: 12.5, weight: on ? .medium : .regular))
-                        .foregroundStyle(on ? Color.pAccent : Color.pInk2).lineLimit(1)
-                    Spacer(minLength: 6)
-                    Text("\(sp.meetingIds.count)").font(.system(size: 11)).foregroundStyle(Color.pInk3)
-                }
-                .padding(.leading, 26).padding(.trailing, 10).frame(height: 28)
-                .background(RoundedRectangle(cornerRadius: 7).fill(on ? Color.pAccent.opacity(0.1) : Color.clear))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-        }
     }
 
     /// A sidebar nav row (spec §2.4): active = teal wash + #4FE0E0 text; a right-hand count/badge.
     private func navRow(_ item: MainView) -> some View {
         let active = (item == .records ? atHome : mainView == item)
-        return Button { mainView = item; if item == .records { selectedId = nil } } label: {
+        return Button { mainView = item; if item == .records { selectedId = nil }; if item == .spaces { selectedSpaceId = nil } } label: {
             HStack(spacing: 10) {
                 Image(systemName: item.icon).font(.system(size: 12))
                     .foregroundStyle(active ? Color.pAccent : Color.pInk2).frame(width: 16)
@@ -365,6 +325,9 @@ struct MeetingView: View {
             if n > 0 { Text("\(n)").font(.system(size: 12)).foregroundStyle(Color.pInk3) }
         case .commands:
             let n = commandStore.commands.count
+            if n > 0 { Text("\(n)").font(.system(size: 12)).foregroundStyle(Color.pInk3) }
+        case .spaces:
+            let n = spaceStore.spaces.count
             if n > 0 { Text("\(n)").font(.system(size: 12)).foregroundStyle(Color.pInk3) }
         default: EmptyView()
         }
