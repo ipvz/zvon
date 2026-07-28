@@ -60,12 +60,19 @@ private func initials(_ name: String) -> String {
     return s.isEmpty ? "•" : s.uppercased()
 }
 
+// Cached day formatters — dayLabel runs once per row on every list render; allocating a DateFormatter
+// each time is a real hot-path cost. Two instances (one per interface language), reused.
+private let _dayFmtRU: DateFormatter = {
+    let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM"; return f
+}()
+private let _dayFmtEN: DateFormatter = {
+    let f = DateFormatter(); f.locale = Locale(identifier: "en_US"); f.dateFormat = "d MMMM"; return f
+}()
 private func dayLabel(_ date: Date) -> String {
     let cal = Calendar.current
     if cal.isDateInToday(date) { return L("Сегодня", "Today") }
     if cal.isDateInYesterday(date) { return L("Вчера", "Yesterday") }
-    let f = DateFormatter(); f.locale = Locale(identifier: _uiLang == .en ? "en_US" : "ru_RU"); f.dateFormat = "d MMMM"
-    return f.string(from: date)
+    return (_uiLang == .en ? _dayFmtEN : _dayFmtRU).string(from: date)
 }
 
 private func groupByDay<T>(_ items: [T], _ date: (T) -> Date) -> [(String, [T])] {
