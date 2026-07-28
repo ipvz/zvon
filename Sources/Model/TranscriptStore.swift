@@ -354,31 +354,46 @@ final class TranscriptStore: ObservableObject {
         guard taskExtractionEnabled, !dictating, taskCommand(text) != nil else { return }
         let cfg = llmConfig()
         let session = currentSessionId
-        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else {
-            // No LLM to gate → keyword-only best-effort (questions already excluded in taskCommand).
-            if let raw = taskCommand(text) { _ = TaskStore.shared.addVoice(GlossaryStore.shared.correct(raw), sessionId: session) }
+        // EXPLICIT «…задачу …» → create directly; the LLM must NOT veto it (it wrongly drops
+        // «сделай задачу … для Елены» as "a request for someone else"). LLM refines owner/due only.
+        if let raw = explicitTaskCommand(text) {
+            let taskText = GlossaryStore.shared.correct(raw)
+            guard let created = TaskStore.shared.addVoice(taskText, sessionId: session) else { return }
+            DebugLog.log("meeting → task (explicit): \(taskText)")
+            refineTaskOwnerDue(created.id, command: text, cfg: cfg)
             return
         }
-        // The LLM DECIDES if it's really a task (vetoes questions / messages to others), then extracts it.
+        // SOFT trigger («напомни/не забудь») only — genuinely ambiguous, so the LLM decides.
+        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else {
+            let taskText = GlossaryStore.shared.correct(taskCommand(text)!)   // no LLM → keyword best-effort
+            _ = TaskStore.shared.addVoice(taskText, sessionId: session)
+            return
+        }
         let context = transcriptText()
         let command = text
         Task { [weak self] in
-            var item: ActionItem?
-            var errored = false
-            do {
-                item = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                               style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
-                    .parseTask(command: command, context: context)   // nil = LLM said "not a task"
-            } catch { errored = true }
-            guard let self else { return }
-            // LLM unreachable but the phrasing is an explicit "…задачу" → still create (don't drop).
-            if item == nil, errored, let raw = self.explicitTaskCommand(command) {
-                item = ActionItem(text: GlossaryStore.shared.correct(raw), owner: nil, due: nil)
-            }
-            guard let item else { return }
+            let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                .parseTask(command: command, context: context)   // nil = a question / message → not a task
+            guard let self, let item else { return }
             let clean = GlossaryStore.shared.correct(item.text.trimmingCharacters(in: .whitespaces))
             guard !clean.isEmpty, let created = TaskStore.shared.addVoice(clean, sessionId: session) else { return }
             TaskStore.shared.edit(created.id) { $0.owner = item.ownerClean; $0.due = item.dueClean }
+        }
+    }
+
+    /// Best-effort async refine of an explicit voice task's owner/due via the LLM. Never removes the
+    /// task (the explicit «…задачу» already created it); only fills in a cleaner owner/deadline.
+    private func refineTaskOwnerDue(_ id: UUID, command: String, cfg: LLMConfig) {
+        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        Task {
+            guard let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                      style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                .parseTask(command: command, context: command) else { return }
+            TaskStore.shared.edit(id) { t in
+                if let o = item.ownerClean, !o.isEmpty { t.owner = o }
+                if let d = item.dueClean, !d.isEmpty { t.due = d }
+            }
         }
     }
 
@@ -986,49 +1001,51 @@ final class TranscriptStore: ObservableObject {
             return
         }
 
-        // Possible spoken task command? The LLM decides: a real "создай задачу/напомни мне …" becomes
-        // a task; a question or a message that merely contains "напомни" is inserted as normal text.
+        // Spoken task command?
         let cfg = llmConfig()
         if taskExtractionEnabled, taskCommand(text) != nil {
+            // EXPLICIT «…задачу …» is an unambiguous command → create directly; the LLM must NOT veto it.
+            // (The gate wrongly rejects «сделай задачу … ДЛЯ Елены» as "a request for someone else" — but
+            // «для Елены» is the task's subject, not a reason to drop it.) The LLM may only refine owner/due.
+            if let raw = explicitTaskCommand(text) {
+                let taskText = GlossaryStore.shared.correct(raw)
+                if let created = TaskStore.shared.addVoice(taskText, sessionId: nil) {
+                    showTaskCreated(taskText)
+                    DebugLog.log("dictation → task (explicit): \(taskText)")
+                    refineTaskOwnerDue(created.id, command: text, cfg: cfg)
+                }
+                return
+            }
+            // SOFT trigger only («напомни / не забудь») — genuinely ambiguous, so the LLM decides.
             if !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty {
                 dictationProcessing = true
                 let command = text
-                DebugLog.log("dictation task-gate start")
+                DebugLog.log("dictation reminder-gate start")
                 Task { [weak self] in
-                    var item: ActionItem?
-                    var errored = false
-                    do {
-                        item = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                       style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
-                            .parseTask(command: command, context: command)
-                    } catch { errored = true }
+                    let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                        style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                        .parseTask(command: command, context: command)
                     guard let self else { return }
                     self.dictationProcessing = false
-                    // LLM unreachable but explicit "…задачу" → create anyway (don't drop the command).
-                    if item == nil, errored, let raw = self.explicitTaskCommand(command) {
-                        item = ActionItem(text: GlossaryStore.shared.correct(raw), owner: nil, due: nil)
-                    }
-                    if let item {            // it IS a task
+                    if let item {            // the reminder IS a task
                         let clean = GlossaryStore.shared.correct(item.text.trimmingCharacters(in: .whitespaces))
                         if !clean.isEmpty, let created = TaskStore.shared.addVoice(clean, sessionId: nil) {
                             TaskStore.shared.edit(created.id) { $0.owner = item.ownerClean; $0.due = item.dueClean }
                         }
                         self.showTaskCreated(clean)
-                        DebugLog.log("dictation → task: \(clean)")
-                    } else {                 // genuinely not a task → insert as a normal dictation
-                        DebugLog.log("dictation task-gate: not a task → insert")
+                        DebugLog.log("dictation → reminder task: \(clean)")
+                    } else {                 // a question / message that merely contains «напомни» → insert
+                        DebugLog.log("dictation reminder-gate: not a task → insert")
                         self.finishInsert(command)
                     }
                 }
                 return
             }
-            // No LLM to gate → keyword-only best-effort task.
-            if let raw = taskCommand(text) {
-                let taskText = GlossaryStore.shared.correct(raw)
-                _ = TaskStore.shared.addVoice(taskText, sessionId: nil)
-                showTaskCreated(taskText)
-                DebugLog.log("dictation → task (no-LLM): \(taskText)")
-            }
+            // No LLM to gate the soft trigger → keyword best-effort.
+            let taskText = GlossaryStore.shared.correct(taskCommand(text)!)
+            _ = TaskStore.shared.addVoice(taskText, sessionId: nil)
+            showTaskCreated(taskText)
+            DebugLog.log("dictation → task (no-LLM): \(taskText)")
             return
         }
 
