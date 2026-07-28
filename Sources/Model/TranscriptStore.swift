@@ -289,8 +289,31 @@ final class TranscriptStore: ObservableObject {
     /// Cheap pre-filter: a task-word or reminder stem is present (LLM then confirms via `parseTask`).
     /// A question is never a command ("напомни, когда встреча?").
     func taskCommand(_ text: String) -> String? { Self.remainderAfterStem(text, Self.taskStems + Self.reminderStems) }
-    /// Only the explicit «…задач…» form (used as the LLM-down fallback — reminders need the LLM).
-    func explicitTaskCommand(_ text: String) -> String? { Self.remainderAfterStem(text, Self.taskStems) }
+    /// Imperative task verbs — «создай / сделай / поставь / добавь / запиши / составь / заведи …».
+    private static let taskVerbStems = ["созда", "сдела", "постав", "добав", "запиш", "состав",
+                                        "завед", "оформ", "сформулир", "заплан", "назнач"]
+
+    /// An EXPLICIT task command — the ONLY form allowed to bypass the LLM veto. Requires a command
+    /// structure: an imperative task-verb at the START + the noun «задач…» within the first few words,
+    /// OR the «Задача: …» colon form. A bare mention of «задача» mid-sentence («у задач агентов»,
+    /// «работа с задачами») is NOT a command and returns nil (→ the LLM gate decides).
+    func explicitTaskCommand(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasSuffix("?") else { return nil }
+        let strip = CharacterSet(charactersIn: " ,.:;!?«»\"—-")
+        let words = trimmed.split(whereSeparator: { " \n\t".contains($0) })
+            .map { $0.lowercased().trimmingCharacters(in: strip) }
+        guard words.count >= 2 else { return nil }
+        // «Задача: …» — the noun leads and a colon introduces the task.
+        if words[0].hasPrefix("задач"), let colon = trimmed.firstIndex(of: ":") {
+            let after = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            return after.isEmpty ? nil : after
+        }
+        // Verb-led: word 0 is a task verb AND «задач…» is one of the first three words.
+        guard Self.taskVerbStems.contains(where: { words[0].hasPrefix($0) }),
+              words.prefix(3).contains(where: { $0.hasPrefix("задач") }) else { return nil }
+        return Self.remainderAfterStem(trimmed, ["задач"])   // original-cased text after the «задач…» word
+    }
 
     /// Voice-command verbs — «открой/запусти/включи …». Keyed on stems so the Russian ASR's many
     /// spellings all match.
@@ -363,12 +386,9 @@ final class TranscriptStore: ObservableObject {
             refineTaskOwnerDue(created.id, command: text, cfg: cfg)
             return
         }
-        // SOFT trigger («напомни/не забудь») only — genuinely ambiguous, so the LLM decides.
-        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else {
-            let taskText = GlossaryStore.shared.correct(taskCommand(text)!)   // no LLM → keyword best-effort
-            _ = TaskStore.shared.addVoice(taskText, sessionId: session)
-            return
-        }
+        // SOFT trigger («напомни/не забудь») or a bare «задач» mention — genuinely ambiguous, so the
+        // LLM decides. No LLM → don't guess (avoids false tasks from «у задач агентов» etc.).
+        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         let context = transcriptText()
         let command = text
         Task { [weak self] in
@@ -1041,11 +1061,10 @@ final class TranscriptStore: ObservableObject {
                 }
                 return
             }
-            // No LLM to gate the soft trigger → keyword best-effort.
-            let taskText = GlossaryStore.shared.correct(taskCommand(text)!)
-            _ = TaskStore.shared.addVoice(taskText, sessionId: nil)
-            showTaskCreated(taskText)
-            DebugLog.log("dictation → task (no-LLM): \(taskText)")
+            // Soft trigger but no LLM to disambiguate («напомни, когда встреча?» vs a real reminder)
+            // → don't guess; insert as normal dictation. Explicit «…задачу» was already handled above.
+            DebugLog.log("dictation soft-trigger, no LLM → insert")
+            finishInsert(text)
             return
         }
 
