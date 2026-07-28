@@ -7,6 +7,12 @@ enum TextInserter {
     /// True if we can synthesize key events (needed for auto-paste).
     static var canAutoPaste: Bool { AXIsProcessTrusted() }
 
+    // The user's real clipboard, captured once and restored after the paste settles. A restore in
+    // flight means a dictation is mid-cycle: a second rapid dictation must NOT re-snapshot (it would
+    // capture the first one's concealed text and lose the user's original) — it reuses this baseline.
+    private static var savedOriginal: [NSPasteboardItem]?
+    private static var pendingRestore: DispatchWorkItem?
+
     @discardableResult
     static func insert(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -20,11 +26,18 @@ enum TextInserter {
         }
         // Editable field → paste at the caret WITHOUT clobbering the user's clipboard: snapshot it,
         // put our text, ⌘V, then restore the snapshot. (Same as Wispr Flow — clipboard stays intact.)
-        let saved = snapshot()
+        pendingRestore?.cancel()                         // supersede a still-pending restore
+        if savedOriginal == nil { savedOriginal = snapshot() }   // capture the user's clipboard only once per cycle
         writeConcealed(trimmed)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             paste()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { restore(saved) }
+            let work = DispatchWorkItem {
+                restore(savedOriginal ?? [])
+                savedOriginal = nil
+                pendingRestore = nil
+            }
+            pendingRestore = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
         }
         return true
     }

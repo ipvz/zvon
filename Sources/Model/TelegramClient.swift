@@ -32,7 +32,9 @@ enum Telegram {
     /// Send text to the configured chat, split into ≤4096-char HTML messages.
     static func send(_ text: String) async throws {
         guard isConfigured else { throw TelegramError.notConfigured }
-        let chunks = split(escapeHTML(text))
+        // Split the RAW text, THEN escape each chunk — escaping first and cutting by char count can
+        // slice through a multi-char entity («…&am|p;…») and Telegram rejects the chunk with a 400.
+        let chunks = split(text).map(escapeHTML)
         for (i, chunk) in chunks.enumerated() {
             try await post("sendMessage", ["chat_id": chatId, "text": chunk, "parse_mode": "HTML", "disable_web_page_preview": true])
             if i < chunks.count - 1 { try? await Task.sleep(nanoseconds: 1_100_000_000) }   // ~1 msg/sec per chat
@@ -46,18 +48,19 @@ enum Telegram {
 
     // MARK: - internals
 
-    private static func post(_ method: String, _ body: [String: Any]) async throws {
+    private static func post(_ method: String, _ body: [String: Any], attempt: Int = 0) async throws {
         guard let url = URL(string: "https://api.telegram.org/bot\(token)/\(method)") else { throw TelegramError.notConfigured }
         var req = URLRequest(url: url); req.httpMethod = "POST"; req.timeoutInterval = 25
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (data, resp) = try await URLSession.shared.data(for: req)
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        if code == 429 {   // rate-limited → wait retry_after and retry once
+        if code == 429 {   // rate-limited → wait retry_after and retry ONCE (bounded, or it recurses forever)
             let retry = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])
                 .flatMap { ($0["parameters"] as? [String: Any])?["retry_after"] as? Int } ?? 2
+            guard attempt < 1 else { throw TelegramError.http(429, "rate limited") }
             try await Task.sleep(nanoseconds: UInt64(min(retry, 30)) * 1_000_000_000)
-            try await post(method, body); return
+            try await post(method, body, attempt: attempt + 1); return
         }
         guard (200..<300).contains(code) else {
             let desc = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["description"] as? String
@@ -72,8 +75,9 @@ enum Telegram {
             .replacingOccurrences(of: ">", with: "&gt;")
     }
 
-    /// Split on paragraph boundaries under the limit (headroom below Telegram's 4096 for HTML entities).
-    private static func split(_ text: String, limit: Int = 3800) -> [String] {
+    /// Split on paragraph boundaries under the limit. Extra headroom below Telegram's 4096 because
+    /// escaping happens AFTER the split and each &/</> grows to a 4-5 char entity.
+    private static func split(_ text: String, limit: Int = 3500) -> [String] {
         if text.count <= limit { return [text] }
         var chunks: [String] = []; var cur = ""
         for para in text.components(separatedBy: "\n") {

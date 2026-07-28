@@ -40,10 +40,11 @@ enum RussianNumbers {
         }
         func flush() {
             guard !run.isEmpty else { return }
-            // keep any trailing punctuation glued to the last spoken word
-            let last = run.last!.word
+            // keep punctuation glued to the run's edges (e.g. «(сто…» / «…тридцать.»)
+            let first = run.first!.word, last = run.last!.word
+            let lead = String(first.prefix(while: { "(«„\"".contains($0) }))
             let trail = String(String(last.reversed()).prefix(while: { ".,!?;:)».…".contains($0) }).reversed())
-            out.append(String(value(of: run)) + trail)
+            out.append(lead + String(value(of: run)) + trail)
             run = []; lastRank = 99
         }
 
@@ -52,10 +53,10 @@ enum RussianNumbers {
             if let b = base[key] {
                 if !run.isEmpty, b.rank >= lastRank { flush() }   // magnitude didn't decrease → a new number
                 run.append((w, key)); lastRank = b.rank
-            } else if scale[key] != nil {
-                run.append((w, key)); lastRank = 99                // a scale opens a fresh base group, same number
+            } else if scale[key] != nil, !run.isEmpty {
+                run.append((w, key)); lastRank = 99                // a scale extends the current number
             } else {
-                flush(); out.append(w)
+                flush(); out.append(w)                             // bare scale word («тысячи файлов») or plain word → literal
             }
         }
         flush()
