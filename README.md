@@ -17,11 +17,7 @@ ZVON слушает встречу с двух источников сразу �
 <p align="center">
   <a href="docs/demo.mp4"><img src="docs/demo.gif" alt="ZVON в работе — живая запись встречи: роли «Вы/Собеседник» и транскрипт в реальном времени" width="900"></a>
 </p>
-<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Полное демо (1 мин)</a> &nbsp;·&nbsp; ниже — статичный разбор экрана</sub></p>
-
-<p align="center">
-  <img src="docs/window.svg" alt="Главное окно ZVON — три колонки: сайдбар, записи, деталь встречи" width="940">
-</p>
+<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Полное демо (1 мин)</a></sub></p>
 
 ### ✦ Что это
 
@@ -136,11 +132,7 @@ ZVON listens to a meeting from two sources at once — your microphone and the s
 <p align="center">
   <a href="docs/demo.mp4"><img src="docs/demo.gif" alt="ZVON in action — live meeting recording with You/Other-side roles and a real-time transcript" width="900"></a>
 </p>
-<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Full demo (1 min)</a> &nbsp;·&nbsp; static screen breakdown below</sub></p>
-
-<p align="center">
-  <img src="docs/window.svg" alt="ZVON main window — three columns: sidebar, records, meeting detail" width="940">
-</p>
+<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Full demo (1 min)</a></sub></p>
 
 ### ✦ What it is
 
