@@ -15,6 +15,11 @@
 ZVON слушает встречу с двух источников сразу — ваш микрофон и системный звук собеседника — и превращает разговор в живой транскрипт, тезисы и задачи. Отдельным горячим клавишем работает push-to-talk диктовка в стиле Wispr Flow: удерживаете клавишу, говорите, отпускаете — текст вставляется прямо в курсор. Речь распознаётся **полностью локально** (Parakeet TDT v3 через FluidAudio, CoreML на Apple Silicon); наружу — к вашему LLM-эндпоинту — уходят только производные тексты, и то лишь если вы его настроите.
 
 <p align="center">
+  <a href="docs/demo.mp4"><img src="docs/demo.gif" alt="ZVON в работе — живая запись встречи: роли «Вы/Собеседник» и транскрипт в реальном времени" width="900"></a>
+</p>
+<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Полное демо (1 мин)</a> &nbsp;·&nbsp; ниже — статичный разбор экрана</sub></p>
+
+<p align="center">
   <img src="docs/window.svg" alt="Главное окно ZVON — три колонки: сайдбар, записи, деталь встречи" width="940">
 </p>
 
@@ -127,6 +132,11 @@ xcodebuild -project Parley.xcodeproj -scheme Parley \
 **A native macOS assistant for meetings and voice input. Russian-first, with recognition that runs on your device.**
 
 ZVON listens to a meeting from two sources at once — your microphone and the system audio of the other side — and turns the conversation into a live transcript, key points and tasks. A separate hotkey drives Wispr-Flow-style push-to-talk dictation: hold the key, speak, release — the text is inserted right at your cursor. Speech is recognised **entirely locally** (Parakeet TDT v3 via FluidAudio, CoreML on Apple Silicon); only the derived text ever leaves the machine — to your LLM endpoint, and only if you configure one.
+
+<p align="center">
+  <a href="docs/demo.mp4"><img src="docs/demo.gif" alt="ZVON in action — live meeting recording with You/Other-side roles and a real-time transcript" width="900"></a>
+</p>
+<p align="center"><sub>▶︎ <a href="docs/demo.mp4">Full demo (1 min)</a> &nbsp;·&nbsp; static screen breakdown below</sub></p>
 
 <p align="center">
   <img src="docs/window.svg" alt="ZVON main window — three columns: sidebar, records, meeting detail" width="940">
