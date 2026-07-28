@@ -438,6 +438,11 @@ final class TranscriptStore: ObservableObject {
 
     // MARK: - Ask about the meeting
 
+    // In-flight ask tasks: cancel a prior request before starting a new one, so a slow earlier answer
+    // (LLM latency varies) can never overwrite a newer one on the shared @Published outputs.
+    private var askTask: Task<Void, Never>?
+    private var spaceAskTasks: [UUID: Task<Void, Never>] = [:]
+
     func ask(_ question: String) {
         let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return }
@@ -451,16 +456,17 @@ final class TranscriptStore: ObservableObject {
         asking = true
         let cfg = llmConfig()
         let transcript = transcriptText()
-        Task { [weak self] in
+        askTask?.cancel()
+        askTask = Task { [weak self] in
             do {
                 let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
                                                      glossary: GlossaryStore.shared.promptFragment)
                     .ask(question: q, transcript: transcript)
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.askAnswer = answer.isEmpty ? "Пустой ответ модели." : answer
                 self.asking = false
             } catch {
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.askError = (error as? LLMError)?.errorDescription ?? error.localizedDescription
                 self.asking = false
             }
@@ -566,16 +572,17 @@ final class TranscriptStore: ObservableObject {
 
         spaceAsks[spaceId] = SpaceAskState(sources: chosen, asking: true)
         let cfg = llmConfig()
-        Task { [weak self] in
+        spaceAskTasks[spaceId]?.cancel()
+        spaceAskTasks[spaceId] = Task { [weak self] in
             do {
                 let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
                                                      style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
                     .askArchive(question: q, context: context)
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.spaceAsks[spaceId]?.answer = answer.isEmpty ? "Пустой ответ модели." : answer
                 self.spaceAsks[spaceId]?.asking = false
             } catch {
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.spaceAsks[spaceId]?.error = (error as? LLMError)?.errorDescription ?? error.localizedDescription
                 self.spaceAsks[spaceId]?.asking = false
             }
@@ -609,16 +616,17 @@ final class TranscriptStore: ObservableObject {
 
         asking = true
         let cfg = llmConfig()
-        Task { [weak self] in
+        askTask?.cancel()
+        askTask = Task { [weak self] in
             do {
                 let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
                                                      glossary: GlossaryStore.shared.promptFragment)
                     .askArchive(question: q, context: context)
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.askAnswer = answer.isEmpty ? "Пустой ответ модели." : answer
                 self.asking = false
             } catch {
-                guard let self else { return }
+                guard !Task.isCancelled, let self else { return }
                 self.askError = (error as? LLMError)?.errorDescription ?? error.localizedDescription
                 self.asking = false
             }
@@ -858,16 +866,23 @@ final class TranscriptStore: ObservableObject {
     }
 
     func stop() {
-        DebugLog.log("RECORD stop pressed; isRecording=\(isRecording)")
+        DebugLog.log("RECORD stop pressed; isRecording=\(isRecording) paused=\(isPaused)")
         guard isRecording else { return }
+        let wasPaused = isPaused
         stopping = true
         isPaused = false
         isRecording = false
         status = .idle
         levels = []
         levelsThem = []
-        // Do NOT cancel runTask — it must drain the tail flush and then finalize (archive/insert).
-        Task { await pipeline.stop() }
+        if wasPaused {
+            // Pausing already ended the segment, so its runTask has finished — there is NO live task
+            // left to drain and finalize. Finalize here directly, or the meeting is silently dropped.
+            finalizeStoppedSession(isDictation: dictating)
+        } else {
+            // Do NOT cancel runTask — it must drain the tail flush and then finalize (archive/insert).
+            Task { await pipeline.stop() }
+        }
     }
 
     /// Pause capture without ending the session — keeps transcript, notes and timeline.

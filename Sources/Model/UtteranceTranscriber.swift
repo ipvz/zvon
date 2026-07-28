@@ -85,9 +85,12 @@ actor UtteranceTranscriber {
         }
 
         var lastWall = monotonicSeconds()
-        while running {
+        // Observe cancellation: when a sibling stream throws, the task group cancels this one. Without
+        // the isCancelled checks the `try?`-swallowed sleep would busy-spin at 100% CPU, leak the audio
+        // tap (source.stop() below never runs), and hang the group so the real error is never surfaced.
+        while running && !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 40_000_000)
-            if !running { break }
+            if !running || Task.isCancelled { break }
             let now = monotonicSeconds()
             let dt = Float(now - lastWall)
             guard dt >= Float(cfg.tick) else { continue }
@@ -157,7 +160,8 @@ actor UtteranceTranscriber {
         let tail = source.snapshotSamples()
         // On key-release / stop, flush the tail. For dictation flush even if the VAD never latched
         // onset, so a short/quiet word said during the hold isn't lost (push-to-talk boundary = key).
-        if inSpeech || cfg.isDictation { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
+        // A cancelled stream (sibling failed) must not emit a spurious final from its aborted tail.
+        if !Task.isCancelled, inSpeech || cfg.isDictation { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
         jobCont?.finish()
         await worker.value
         source.stop()
