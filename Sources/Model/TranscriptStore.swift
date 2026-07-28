@@ -810,8 +810,17 @@ final class TranscriptStore: ObservableObject {
 
     func toggle() { isRecording ? stop() : start() }
 
+    private var startAfterDictation = false   // record pressed during a dictation → start a meeting once it ends
+
     func start() {
-        guard !isRecording else { return }
+        if isRecording {
+            // Record pressed while a DICTATION is active/stuck (its key-release can be missed, e.g. an
+            // accidental modifier trigger during typing — then it never stops and holds isRecording, so
+            // «Начать запись» did nothing). Take over: end the dictation, start a meeting once it drains.
+            // A genuine meeting recording is left untouched (no-op).
+            if dictating { startAfterDictation = true; stopDictation() }
+            return
+        }
         isRecording = true
         isPaused = false
         stopping = false
@@ -957,6 +966,10 @@ final class TranscriptStore: ObservableObject {
         }
         recordingStartedAt = nil
         status = .idle
+        if startAfterDictation {        // record button took over a stuck dictation → now start the meeting
+            startAfterDictation = false
+            start()
+        }
     }
 
     private func archiveMeeting() {
