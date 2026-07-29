@@ -1,20 +1,22 @@
 import Foundation
 
 /// A saved prompt-template ("lens") run over a meeting's notes+transcript to produce an artifact
-/// (follow-up email, minutes, PRD, coaching…). Built-ins ship with the app; users add their own.
+/// (follow-up email, minutes, PRD, coaching…). The curated set is seeded on first run; from then on
+/// every recipe — seeded or user-made — is fully editable and deletable.
 struct Recipe: Codable, Identifiable, Equatable {
     var id = UUID()
     var name: String
     var icon: String            // SF Symbol
     var prompt: String          // the instruction fed to the LLM over the meeting materials
-    var builtin: Bool = false
+    var builtin: Bool = false   // seeded default (kept for the icon default / "restore defaults"); still editable
 }
 
 @MainActor
 final class RecipeStore: ObservableObject {
     static let shared = RecipeStore()
-    @Published private(set) var custom: [Recipe] = []
+    @Published private(set) var recipes: [Recipe] = []
     private static let key = "recipes"
+    private static let seededKey = "recipesSeeded"
 
     /// Curated defaults — each is just an instruction; the runner supplies the meeting content.
     static let builtins: [Recipe] = [
@@ -35,25 +37,53 @@ final class RecipeStore: ObservableObject {
                builtin: true),
     ]
 
-    var all: [Recipe] { Self.builtins + custom }
+    /// Kept for source compatibility; the list is now one flat editable collection.
+    var all: [Recipe] { recipes }
+    var custom: [Recipe] { recipes }
 
     init() { load() }
 
     func add(name: String, prompt: String, icon: String = "wand.and.stars") {
         let n = name.trimmingCharacters(in: .whitespaces), p = prompt.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty, !p.isEmpty else { return }
-        custom.insert(Recipe(name: n, icon: icon, prompt: p), at: 0); save()
+        recipes.insert(Recipe(name: n, icon: icon, prompt: p), at: 0); save()
     }
-    func update(_ r: Recipe) {
-        if let i = custom.firstIndex(where: { $0.id == r.id }) { custom[i] = r; save() }
+
+    /// Insert or update — the editor doesn't need to know which.
+    func upsert(_ r: Recipe) {
+        let n = r.name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        var r = r; r.name = n; r.prompt = r.prompt.trimmingCharacters(in: .whitespaces)
+        if let i = recipes.firstIndex(where: { $0.id == r.id }) { recipes[i] = r } else { recipes.append(r) }
+        save()
     }
-    func remove(_ id: UUID) { custom.removeAll { $0.id == id }; save() }
+
+    func update(_ r: Recipe) { upsert(r) }
+    func remove(_ id: UUID) { recipes.removeAll { $0.id == id }; save() }
+
+    /// Add back any curated default whose name is missing (never duplicates or overwrites edits).
+    func restoreDefaults() {
+        let present = Set(recipes.map { $0.name.lowercased() })
+        let missing = Self.builtins.filter { !present.contains($0.name.lowercased()) }
+        guard !missing.isEmpty else { return }
+        recipes.append(contentsOf: missing); save()
+    }
 
     private func load() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
-           let items = try? JSONDecoder().decode([Recipe].self, from: data) { custom = items }
+           let items = try? JSONDecoder().decode([Recipe].self, from: data) {
+            recipes = items
+        }
+        // First run (or upgrading from the old builtins-were-separate scheme): seed the curated set into
+        // the editable list, once, so they can be edited/deleted like any other recipe.
+        if !UserDefaults.standard.bool(forKey: Self.seededKey) {
+            let present = Set(recipes.map { $0.name.lowercased() })
+            recipes.append(contentsOf: Self.builtins.filter { !present.contains($0.name.lowercased()) })
+            UserDefaults.standard.set(true, forKey: Self.seededKey)
+            save()
+        }
     }
     private func save() {
-        if let data = try? JSONEncoder().encode(custom) { UserDefaults.standard.set(data, forKey: Self.key) }
+        if let data = try? JSONEncoder().encode(recipes) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 }

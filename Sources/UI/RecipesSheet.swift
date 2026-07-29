@@ -32,15 +32,18 @@ struct RecipesSheet: View {
         .background(Color.pCanvas)
         .sheet(isPresented: $showEditor) {
             RecipeEditor(recipe: editing ?? Recipe(name: "", icon: "wand.and.stars", prompt: "")) { saved in
-                if saved.name.isEmpty { showEditor = false; return }
-                if recipes.custom.contains(where: { $0.id == saved.id }) { recipes.update(saved) }
-                else { recipes.add(name: saved.name, prompt: saved.prompt, icon: saved.icon) }
+                recipes.upsert(saved)   // insert or update — the store figures out which
                 showEditor = false
             } onDelete: {
-                if let e = editing { recipes.remove(e.id) }
+                if let e = editing { deleteRecipe(e) }
                 showEditor = false
             }
         }
+    }
+
+    private func deleteRecipe(_ r: Recipe) {
+        recipes.remove(r.id)
+        if selected?.id == r.id { selected = nil; output = ""; error = nil }
     }
 
     private var header: some View {
@@ -64,33 +67,48 @@ struct RecipesSheet: View {
                 }.padding(8)
             }
             Divider().overlay(Color.pLine2)
-            Button { editing = nil; showEditor = true } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus").font(.system(size: 12)).foregroundStyle(Color.pAccent)
-                    Text(L("Свой рецепт", "Custom recipe")).font(PFont.secondary).foregroundStyle(Color.pInk1)
-                    Spacer()
-                }.padding(.horizontal, 12).frame(height: 40).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+            HStack(spacing: 8) {
+                Button { editing = nil; showEditor = true } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus").font(.system(size: 12)).foregroundStyle(Color.pAccent)
+                        Text(L("Свой рецепт", "Custom recipe")).font(PFont.secondary).foregroundStyle(Color.pInk1)
+                        Spacer()
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                if recipes.all.count < RecipeStore.builtins.count {
+                    Button { recipes.restoreDefaults() } label: {
+                        Image(systemName: "arrow.counterclockwise").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                    }.buttonStyle(.plain).help(L("Восстановить стандартные", "Restore defaults"))
+                }
+            }.padding(.horizontal, 12).frame(height: 40)
         }
         .background(Color.pRail)
     }
 
+    @State private var hovered: UUID?
+
     private func recipeRow(_ r: Recipe) -> some View {
         let active = selected?.id == r.id
+        let showActions = hovered == r.id || active
         return Button { run(r) } label: {
             HStack(spacing: 10) {
                 Image(systemName: r.icon).font(.system(size: 13)).foregroundStyle(active ? Color.pInk1 : Color.pInk2).frame(width: 18)
                 Text(r.name).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
                 Spacer(minLength: 4)
-                if !r.builtin {
-                    Image(systemName: "pencil").font(.system(size: 11)).foregroundStyle(Color.pInk3)
-                        .onTapGesture { editing = r; showEditor = true }
+                if showActions {
+                    Button { editing = r; showEditor = true } label: {
+                        Image(systemName: "pencil").font(.system(size: 11)).foregroundStyle(Color.pInk3).frame(width: 22, height: 22).contentShape(Rectangle())
+                    }.buttonStyle(.plain).help(L("Редактировать", "Edit"))
+                    Button { deleteRecipe(r) } label: {
+                        Image(systemName: "trash").font(.system(size: 11)).foregroundStyle(Color.pInk3).frame(width: 22, height: 22).contentShape(Rectangle())
+                    }.buttonStyle(.plain).help(L("Удалить", "Delete"))
                 }
             }
             .padding(.horizontal, 10).frame(height: 36)
             .background(RoundedRectangle(cornerRadius: 8).fill(active ? Color.pSelection : Color.clear))
             .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel(r.name)
+        .onHover { hovered = $0 ? r.id : (hovered == r.id ? nil : hovered) }
     }
 
     @ViewBuilder private var result: some View {
@@ -224,11 +242,12 @@ private struct RecipeEditor: View {
                     .overlay(RoundedRectangle(cornerRadius: PRadius.control).strokeBorder(Color.pButtonBorder, lineWidth: 1))
             }
             HStack {
-                if !recipe.builtin, recipe.name.isEmpty == false {
+                if !recipe.name.isEmpty {   // editing an existing recipe (any kind) → allow delete
                     Button { onDelete() } label: { Text(L("Удалить", "Delete")).foregroundStyle(Color.pDanger) }.buttonStyle(.plain).font(.system(size: 12))
                 }
                 Spacer()
                 Button(L("Сохранить", "Save")) { onSave(recipe) }.buttonStyle(PPrimaryButtonStyle())
+                    .disabled(recipe.name.trimmingCharacters(in: .whitespaces).isEmpty || recipe.prompt.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
         .padding(24).frame(width: 440).background(Color.pCanvas)
