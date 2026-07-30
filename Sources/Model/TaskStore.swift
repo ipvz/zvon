@@ -33,10 +33,21 @@ final class TaskStore: ObservableObject {
     static let shared = TaskStore()
     @Published private(set) var tasks: [TaskItem] = []
 
+    // Interval reminder about OPEN tasks (a floating nudge + sound every N minutes).
+    @Published var reminderEnabled: Bool { didSet { UserDefaults.standard.set(reminderEnabled, forKey: "taskReminderEnabled") } }
+    @Published var reminderIntervalMin: Int { didSet { UserDefaults.standard.set(reminderIntervalMin, forKey: "taskReminderInterval") } }
+    @Published var reminderSound: Bool { didSet { UserDefaults.standard.set(reminderSound, forKey: "taskReminderSound") } }
+
     private static let key = "tasks"
     private static let limit = 500
 
-    init() { load() }
+    init() {
+        let d = UserDefaults.standard
+        reminderEnabled = d.bool(forKey: "taskReminderEnabled")               // off by default; user opts in
+        reminderIntervalMin = d.object(forKey: "taskReminderInterval") == nil ? 60 : max(5, d.integer(forKey: "taskReminderInterval"))
+        reminderSound = d.object(forKey: "taskReminderSound") == nil ? true : d.bool(forKey: "taskReminderSound")
+        load()
+    }
 
     // MARK: Query
 

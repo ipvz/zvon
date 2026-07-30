@@ -116,10 +116,53 @@ struct TasksView: View {
     @ObservedObject var tasks = TaskStore.shared
     @State private var flash: UUID?
 
+    /// Reminder controls right where tasks live — a floating nudge every N minutes about open tasks.
+    private var reminderBar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                Image(systemName: "bell").font(.system(size: 13)).foregroundStyle(tasks.reminderEnabled ? Color.pAccent : Color.pInk3).frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("Напоминать о задачах", "Remind me about tasks")).font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk1)
+                    Text(L("Заметная плашка со звуком, пока задачи не закрыты", "A floating card with sound until tasks are done")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                }
+                Spacer(minLength: 8)
+                ParleyToggle(on: $tasks.reminderEnabled)
+            }
+            .padding(.horizontal, 14).frame(minHeight: 52)
+
+            if tasks.reminderEnabled {
+                Hairline(color: .pLine2)
+                HStack(spacing: 12) {
+                    Text(L("Каждые", "Every")).font(.system(size: 12.5)).foregroundStyle(Color.pInk2)
+                    HStack(spacing: 3) {
+                        ForEach([(15, "15 мин"), (30, "30 мин"), (60, "1 час"), (120, "2 часа")], id: \.0) { opt in
+                            let on = tasks.reminderIntervalMin == opt.0
+                            Text(opt.1).font(.system(size: 12, weight: on ? .semibold : .regular))
+                                .foregroundStyle(on ? Color.pAccent : Color.pInk2)
+                                .padding(.horizontal, 10).frame(height: 26)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.pAccent.opacity(0.14) : Color.clear))
+                                .contentShape(Rectangle())
+                                .onTapGesture { tasks.reminderIntervalMin = opt.0 }
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    HStack(spacing: 6) {
+                        Image(systemName: tasks.reminderSound ? "speaker.wave.2.fill" : "speaker.slash.fill").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                        ParleyToggle(on: $tasks.reminderSound)
+                    }
+                }
+                .padding(.horizontal, 14).frame(minHeight: 48)
+            }
+        }
+        .background(Color.pRail).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pLine, lineWidth: 1))
+    }
+
     var body: some View {
         libraryColumn { (proxy: ScrollViewProxy) in
             let open = tasks.tasks.filter { !$0.done }
             let done = tasks.tasks.filter { $0.done }
+            reminderBar.padding(.bottom, 20)
             SectionLabel(text: L("Открытые", "Open"))
             if open.isEmpty { emptyLine(L("Задачи появятся из встреч или добавьте вручную.", "Tasks will appear from meetings, or add them manually.")) }
             ForEach(open) { row($0) }

@@ -1,6 +1,73 @@
 import SwiftUI
 import AppKit
 
+// MARK: - Task reminder card (floating nudge about open tasks)
+
+struct TaskReminderView: View {
+    let controller: TaskReminderController
+    @ObservedObject private var tasks = TaskStore.shared
+    @ObservedObject private var loc = L11n.shared
+
+    var body: some View {
+        let open = tasks.open
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle().fill(Color.pAccent.opacity(0.16)).frame(width: 26, height: 26)
+                    Image(systemName: "bell.fill").font(.system(size: 12)).foregroundStyle(Color.pAccent)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("Открытые задачи", "Open tasks")).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                    Text(L("\(open.count) \(MeetingView.plural(open.count, "задача", "задачи", "задач")) ждут",
+                           "\(open.count) task\(open.count == 1 ? "" : "s") waiting")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                }
+                Spacer(minLength: 8)
+                Button { controller.dismiss() } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.pInk3)
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14).padding(.top, 13).padding(.bottom, 11)
+
+            Hairline(color: .pLine2)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(open.prefix(4)) { t in
+                    HStack(alignment: .top, spacing: 8) {
+                        Circle().fill(Color.pAccent.opacity(0.7)).frame(width: 4, height: 4).padding(.top, 6)
+                        Text(t.text).font(.system(size: 12.5)).foregroundStyle(Color.pInk1).lineLimit(2)
+                    }
+                }
+                if open.count > 4 {
+                    Text(L("ещё \(open.count - 4)", "\(open.count - 4) more")).font(.system(size: 11)).foregroundStyle(Color.pInk3).padding(.leading, 12)
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11).frame(maxWidth: .infinity, alignment: .leading)
+
+            Hairline(color: .pLine2)
+
+            HStack(spacing: 8) {
+                Button { controller.snooze() } label: {
+                    Text(L("Отложить", "Snooze")).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk2)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+                }.buttonStyle(.plain)
+                Button { controller.openTasks() } label: {
+                    Text(L("Открыть задачи", "Open tasks")).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: 8))
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+        }
+        .frame(width: 360)
+        .background(Color.pWidgetBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+    }
+}
+
 // MARK: - Floating widget root (puck ↔ compact ↔ expanded, + error)
 
 struct WidgetRootView: View {

@@ -53,6 +53,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var widget: FloatingWidgetController?
     private var dictationHUD: DictationHUDController?
     private var dictationHold: DictationHoldController?
+    private var taskReminder: TaskReminderController?
     private var spaceMonitor: Any?
     private var themeCancellable: AnyCancellable?
 
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         widget = FloatingWidgetController(store: store)
         dictationHUD = DictationHUDController(store: store)
         dictationHold = DictationHoldController(store: store)
+        taskReminder = TaskReminderController(store: store)
 
         // Apply the Тема preference app-wide (SwiftUI scenes + every AppKit-hosted panel/popover).
         themeCancellable = store.$themePref.sink { pref in

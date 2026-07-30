@@ -474,3 +474,88 @@ final class DictationHoldController {
         if store.isDictating { store.stopDictation() }
     }
 }
+
+// MARK: - Task reminder (a floating nudge + sound every N minutes while tasks stay open)
+
+@MainActor
+final class TaskReminderController {
+    private let store: TranscriptStore
+    private let tasks = TaskStore.shared
+    private var panel: NSPanel?
+    private var timer: Timer?
+    private var lastFired: Date?          // when a reminder was last shown / snoozed from
+
+    init(store: TranscriptStore) {
+        self.store = store
+        // Poll once a minute; the interval/enabled checks decide whether to actually fire.
+        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func tick() {
+        guard tasks.reminderEnabled, panel == nil,
+              !store.isRecording, !store.isDictating,       // never interrupt a live capture
+              !tasks.open.isEmpty else { return }
+        let interval = TimeInterval(max(5, tasks.reminderIntervalMin) * 60)
+        if let last = lastFired, Date().timeIntervalSince(last) < interval { return }
+        fire()
+    }
+
+    private static var reminderSound: NSSound? = {
+        // A custom cue bundled as Resources/reminder.(m4a|wav|aiff|mp3); falls back to a system sound.
+        for ext in ["m4a", "wav", "aiff", "mp3"] {
+            if let url = Bundle.main.url(forResource: "reminder", withExtension: ext),
+               let s = NSSound(contentsOf: url, byReference: true) { return s }
+        }
+        return NSSound(named: "Glass")
+    }()
+
+    private func fire() {
+        lastFired = Date()
+        if tasks.reminderSound { Self.reminderSound?.stop(); Self.reminderSound?.play() }
+        present()
+    }
+
+    /// «Отложить» — hush for one interval.
+    func snooze() { lastFired = Date(); dismiss() }
+
+    func openTasks() {
+        NSApp.activate(ignoringOtherApps: true)
+        for w in NSApp.windows where w.identifier?.rawValue == "main" { w.makeKeyAndOrderFront(nil) }
+        store.pendingOpenTasks = true
+        lastFired = Date()
+        dismiss()
+    }
+
+    func dismiss() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+
+    private func present() {
+        let host = NSHostingController(rootView: TaskReminderView(controller: self))
+        host.sizingOptions = .preferredContentSize
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 200),
+                        styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        p.level = .floating
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
+        p.contentViewController = host
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = NSColor.clear.cgColor
+        // Top-centre of the main screen — hard to miss, out of the way of the dock.
+        if let screen = NSScreen.main {
+            let v = screen.visibleFrame
+            let size = host.view.fittingSize
+            p.setContentSize(size)
+            p.setFrameOrigin(NSPoint(x: v.midX - size.width / 2, y: v.maxY - size.height - 24))
+        }
+        p.orderFrontRegardless()
+        panel = p
+    }
+}

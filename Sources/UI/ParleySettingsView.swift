@@ -23,6 +23,7 @@ struct ParleySettingsView: View {
     @EnvironmentObject var store: TranscriptStore
     @EnvironmentObject var models: ModelManager
     @ObservedObject private var loc = L11n.shared
+    @ObservedObject private var taskStore = TaskStore.shared
     @State private var tab: SettingsTab = .general
     var onClose: (() -> Void)? = nil
 
@@ -301,6 +302,10 @@ struct ParleySettingsView: View {
                 PRow(L("Саммари и Итог", "Summaries & recap")) { ParleyToggle(on: $store.summariesEnabled) }
                 PDivider()
                 PRow(L("Извлечение задач", "Task extraction")) { ParleyToggle(on: $store.taskExtractionEnabled) }
+                PDivider()
+                PRow(L("Напоминания о задачах", "Task reminders"), sub: L("Настраиваются в разделе «Задачи»", "Configured in the Tasks section")) {
+                    ParleyToggle(on: $taskStore.reminderEnabled)
+                }
             }
         }
     }
