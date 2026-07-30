@@ -45,6 +45,10 @@ final class TranscriptStore: ObservableObject {
     @Published var notesError: String?          // surfaced LLM failure (nil = fine)
     private var noteDebounce: Task<Void, Never>?
 
+    @Published var userNotes = ""               // «Мои заметки» for the live session (Granola-style)
+    @Published var userNotesEnriching = false
+    @Published var userNotesError: String?
+
     // Ask-about-the-meeting (⌘K command field)
     @Published var asking = false
     @Published var askQuestion: String?
@@ -223,7 +227,7 @@ final class TranscriptStore: ObservableObject {
             partials[speaker] = nil
             nextLineId += 1
             let lineId = nextLineId
-            let corrected = GlossaryStore.shared.correct(text)   // local glossary fix on the final
+            let corrected = GlossaryStore.shared.correct(lightClean(text))   // consistent casing/spacing + glossary fix
             finals.append(TranscriptLine(id: lineId, speaker: speaker, text: corrected, isFinal: true, startSec: startSec + segmentBaseSec))
             finals.sort { $0.startSec < $1.startSec }
             rebuildLines()
@@ -538,6 +542,8 @@ final class TranscriptStore: ObservableObject {
         let members = SessionStore.shared.sessions.filter { sp.meetingIds.contains($0.id) }
         guard !members.isEmpty else { spaceSummaryError[id] = "Нет встреч для сводки."; return }
 
+        // Budget the transcript fallback so many summary-less meetings can't blow the context window.
+        let trBudget = max(1500, 24000 / max(1, members.count))
         let material = members.map { s -> String in
             let dur = s.durationSec.map { " · \(Int(($0 / 60).rounded())) мин" } ?? ""
             var b = "## \(s.title) — \(Self.archiveDate.string(from: s.date))\(dur)"
@@ -545,11 +551,17 @@ final class TranscriptStore: ObservableObject {
             if !sum.isEmpty { b += "\nИтог:\n\(sum)" }
             let dec = (s.noteDecisions ?? []).map { "• \($0)" }.joined(separator: "\n")
             if !dec.isEmpty { b += "\nРешения:\n\(dec)" }
+            // No Итог/Решения (never generated) → fall back to the raw transcript so the digest still
+            // has material to work with, instead of "недостаточно материала" on a meeting that HAS content.
+            if sum.isEmpty, dec.isEmpty, let tr = s.transcript, !tr.isEmpty {
+                b += "\nРасшифровка:\n\(String(tr.prefix(trBudget)))"
+            }
             return b
         }.joined(separator: "\n\n")
 
         let instruction = """
-        Собери ОБЩУЮ СВОДКУ по проекту «\(sp.name)» на основе итогов всех встреч ниже (\(members.count) шт).
+        Собери ОБЩУЮ СВОДКУ по проекту «\(sp.name)» на основе материалов всех встреч ниже (\(members.count) шт).
+        У каждой встречи есть либо готовый Итог/Решения, либо сырая Расшифровка — используй то, что есть.
         Разделы: краткое резюме проекта; ключевые темы и прогресс; принятые решения; открытые вопросы и следующие шаги.
         Пиши сжато, по делу, на языке встреч. Простым текстом с абзацами и списками через тире — без markdown-заголовков и символов #/*.
         """
@@ -864,6 +876,8 @@ final class TranscriptStore: ObservableObject {
         pendingSegmentAdvance = 0
         currentSessionId = UUID()
         meetingTitle = nil; currentEvent = nil
+        userNotes = ""; userNotesEnriching = false; userNotesError = nil
+        GlossaryStore.shared.setSessionTerms([])   // drop the prior meeting's attendee names
     }
 
     /// Pull the current/next calendar event (if calendar access is already granted) to auto-title the
@@ -874,6 +888,64 @@ final class TranscriptStore: ObservableObject {
             guard let ev = await CalendarService.shared.currentOrNext(), let self else { return }
             if !ev.title.isEmpty { self.meetingTitle = ev.title }
             self.currentEvent = ev
+            self.seedGlossaryFromAttendees(ev.attendees)   // transcribe participant names correctly
+        }
+    }
+
+    /// Register the meeting's participant given-names as TRANSIENT glossary terms so the transcript
+    /// spells them right. Kept separate from the persisted glossary; cleared on the next session.
+    private func seedGlossaryFromAttendees(_ attendees: [String]) {
+        let names = attendees.flatMap { raw -> [String] in
+            guard !raw.contains("@") else { return [] }              // skip email-looking entries
+            return raw.split(whereSeparator: { " \t".contains($0) }).map(String.init)
+        }.filter { $0.count >= 4 }                                   // avoid noisy 1–3 char tokens
+        GlossaryStore.shared.setSessionTerms(Array(Set(names)))
+    }
+
+    @Published var pastNotesEnriching: UUID?     // which archived record's notes are being enriched
+
+    /// Enrich a PAST record's own notes from its stored transcript, writing the result back to the DB.
+    func enrichPastUserNotes(_ id: UUID) {
+        guard pastNotesEnriching == nil,
+              let rec = SessionStore.shared.sessions.first(where: { $0.id == id }),
+              let notesText = rec.userNotes?.trimmingCharacters(in: .whitespacesAndNewlines), !notesText.isEmpty,
+              let transcript = rec.transcript, !transcript.isEmpty else { return }
+        pastNotesEnriching = id
+        let cfg = llmConfig()
+        Task { [weak self] in
+            let out = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                               style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                .enrich(userNotes: notesText, transcript: transcript)
+            guard let self else { return }
+            if let out { SessionStore.shared.updateUserNotes(id, out) }
+            self.pastNotesEnriching = nil
+        }
+    }
+
+    /// Live «Мои заметки» → enrich with facts from the transcript (Granola-style). Distinct from Итог.
+    func enrichUserNotes() {
+        let notesText = userNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !notesText.isEmpty, !finals.isEmpty, !userNotesEnriching else {
+            if finals.isEmpty { userNotesError = L("Нет транскрипта для дополнения.", "No transcript to enrich from.") }
+            return
+        }
+        userNotesError = nil
+        userNotesEnriching = true
+        let cfg = llmConfig()
+        let transcript = transcriptText()
+        Task { [weak self] in
+            do {
+                let out = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
+                                                  style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                    .enrich(userNotes: notesText, transcript: transcript)
+                guard let self else { return }
+                self.userNotes = out
+                self.userNotesEnriching = false
+            } catch {
+                guard let self else { return }
+                self.userNotesError = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+                self.userNotesEnriching = false
+            }
         }
     }
 
@@ -985,7 +1057,8 @@ final class TranscriptStore: ObservableObject {
             transcript: transcriptText(),
             noteSummary: notes.summary.isEmpty ? nil : notes.summary,
             noteDecisions: notes.decisions.isEmpty ? nil : notes.decisions,
-            noteTopics: notes.topics.isEmpty ? nil : notes.topics
+            noteTopics: notes.topics.isEmpty ? nil : notes.topics,
+            userNotes: userNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : userNotes
         )
     }
 
@@ -1144,13 +1217,19 @@ final class TranscriptStore: ObservableObject {
         }
     }
 
-    /// Light cleanup for dictated text: trim, collapse spaces, capitalize the first letter.
-    private func cleanDictation(_ s: String) -> String {
+    /// Trim, collapse runs of spaces, capitalize the first letter. Deterministic, local, instant.
+    /// (The model already punctuates; this only guarantees consistency across finals.)
+    private func lightClean(_ s: String) -> String {
         var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         t = t.replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
-        t = RussianNumbers.digitsify(t)   // «сто пятьдесят» → «150», local + instant, no LLM needed
         if let f = t.first { t = f.uppercased() + t.dropFirst() }
         return t
+    }
+
+    /// Dictation cleanup = lightClean + numeral ITN («сто пятьдесят» → «150»). Digits are wanted in
+    /// dictated text but NOT in a verbatim meeting transcript, so digitsify stays dictation-only.
+    private func cleanDictation(_ s: String) -> String {
+        RussianNumbers.digitsify(lightClean(s))
     }
 
     private func showDictationCard(_ text: String) {

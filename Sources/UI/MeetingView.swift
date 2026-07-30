@@ -24,13 +24,15 @@ struct MeetingView: View {
     @State private var showRecipes = false
     @State private var recFilter: RecordFilter = .all
     @State private var detailTab: DetailTab = .summary
+    @State private var pastNotesDraft = ""            // editable copy of a past record's «Мои заметки»
+    @State private var pastNotesFor: UUID?            // which record pastNotesDraft belongs to
     @State private var detailAsk = ""
     @FocusState private var searchFocused: Bool
     @FocusState private var detailAskFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     /// Which pane of a meeting's detail is showing (spec: Итог first, Транскрипт second).
-    enum DetailTab { case summary, transcript }
+    enum DetailTab { case summary, notes, transcript }
 
     /// Записи is the 3-column home (list + detail); .meeting is an alias kept for existing callers.
     private var atHome: Bool { mainView == .records || mainView == .meeting }
@@ -408,6 +410,11 @@ struct MeetingView: View {
                         Circle().strokeBorder(Color.pInk3, lineWidth: 1.5).frame(width: 7, height: 7)
                     }
                     Text(s.title).font(.system(size: 13.5, weight: .medium)).foregroundStyle(Color.pInk1).lineLimit(1)
+                    if let n = s.userNotes, !n.isEmpty {
+                        Spacer(minLength: 4)
+                        Image(systemName: "note.text").font(.system(size: 10)).foregroundStyle(Color.pInk3)
+                            .help(L("Есть заметки", "Has notes"))
+                    }
                 }
                 Text(recordMeta(s)).font(.system(size: 11.5)).foregroundStyle(Color.pInk3).lineLimit(1).padding(.leading, 15)
             }
@@ -512,6 +519,7 @@ struct MeetingView: View {
     private var detailTabControl: some View {
         HStack(spacing: 2) {
             detailTabSeg(L("Итог", "Summary"), .summary)
+            detailTabSeg(L("Мои заметки", "My notes"), .notes)
             detailTabSeg(L("Транскрипт", "Transcript"), .transcript)
         }
         .padding(2).background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
@@ -531,7 +539,11 @@ struct MeetingView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     if store.askQuestion != nil { askCard }
                     if let err = store.notesError, store.notes.isEmpty, detailTab == .summary { notesErrorCard(err) }
-                    if detailTab == .summary { itogView } else { transcriptView }
+                    switch detailTab {
+                    case .summary:    itogView
+                    case .notes:      notesEditorView
+                    case .transcript: transcriptView
+                    }
                     Color.clear.frame(height: 1).id("bottom")
                 }
                 .padding(.horizontal, 30).padding(.top, 26).padding(.bottom, 20)
@@ -560,6 +572,88 @@ struct MeetingView: View {
             if !n.summary.isEmpty { sumBlock(L("ТЕЗИСЫ", "KEY POINTS"), n.summary) }
             if !n.decisions.isEmpty { sumBlock(L("РЕШЕНИЯ", "DECISIONS"), n.decisions) }
             if !tasks.isEmpty { taskBlock(L("ЗАДАЧИ", "TASKS"), tasks) }
+        }
+    }
+
+    // MARK: «Мои заметки» (Granola-style: your notes, AI-enriched from the transcript)
+
+    @ViewBuilder private var notesEditorView: some View {
+        if viewingPast, let s = selected {
+            if s.kind == .dictation {
+                Text(L("У диктовки нет заметок.", "Dictation has no notes.")).font(.system(size: 13)).foregroundStyle(Color.pInk3)
+            } else {
+                pastNotesEditor(s)
+            }
+        } else {
+            liveNotesEditor
+        }
+    }
+
+    private var notesHint: some View {
+        Text(L("Пишите свои заметки во время встречи — по кнопке «Дополнить» ZVON добавит в них факты, цифры и решения из транскрипта, не меняя ваши формулировки.",
+               "Jot your own notes during the meeting — «Enrich» adds facts, numbers and decisions from the transcript without changing your wording."))
+            .font(.system(size: 11.5)).foregroundStyle(Color.pInk3).fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func notesHeader(enrichDisabled: Bool, busy: Bool, action: @escaping () -> Void) -> some View {
+        HStack {
+            Text(L("МОИ ЗАМЕТКИ", "MY NOTES")).font(.system(size: 11)).tracking(0.9).foregroundStyle(Color.pInk3)
+            Spacer()
+            Button(action: action) {
+                HStack(spacing: 5) {
+                    Image(systemName: busy ? "sparkles" : "wand.and.stars").font(.system(size: 11, weight: .semibold))
+                    Text(busy ? L("Дополняю…", "Enriching…") : L("Дополнить", "Enrich")).font(.system(size: 12, weight: .medium))
+                }.foregroundStyle(enrichDisabled || busy ? Color.pInk3 : Color.pAccent)
+            }.buttonStyle(.plain).disabled(enrichDisabled || busy)
+        }
+    }
+
+    private func notesTextEditor(_ text: Binding<String>) -> some View {
+        ZStack(alignment: .topLeading) {
+            if text.wrappedValue.isEmpty {
+                Text(L("Запишите свои заметки…", "Jot your own notes…")).font(.system(size: 14))
+                    .foregroundStyle(Color.pInk3).padding(.horizontal, 13).padding(.vertical, 12).allowsHitTesting(false)
+            }
+            TextEditor(text: text).font(.system(size: 14)).foregroundStyle(Color.pInk1)
+                .scrollContentBackground(.hidden).padding(8).frame(minHeight: 240)
+        }
+        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pLine, lineWidth: 1))
+    }
+
+    private var liveNotesEditor: some View {
+        let disabled = store.userNotes.trimmingCharacters(in: .whitespaces).isEmpty || store.lines.isEmpty
+        return VStack(alignment: .leading, spacing: 12) {
+            notesHeader(enrichDisabled: disabled, busy: store.userNotesEnriching) { store.enrichUserNotes() }
+            notesHint
+            notesTextEditor($store.userNotes)
+            if let e = store.userNotesError { Text(e).font(.system(size: 12)).foregroundStyle(Color.pDanger).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+
+    private func pastNotesEditor(_ s: SessionRecord) -> some View {
+        let busy = store.pastNotesEnriching == s.id
+        let dirty = pastNotesDraft != (s.userNotes ?? "")
+        return VStack(alignment: .leading, spacing: 12) {
+            notesHeader(enrichDisabled: pastNotesDraft.trimmingCharacters(in: .whitespaces).isEmpty, busy: busy) {
+                if dirty { sessions.updateUserNotes(s.id, pastNotesDraft) }   // save before enriching
+                store.enrichPastUserNotes(s.id)
+            }
+            notesHint
+            notesTextEditor($pastNotesDraft)
+            HStack {
+                if dirty {
+                    Button(L("Сохранить", "Save")) { sessions.updateUserNotes(s.id, pastNotesDraft) }
+                        .buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Color.pAccent)
+                }
+                Spacer()
+            }
+        }
+        .onAppear { if pastNotesFor != s.id { pastNotesDraft = s.userNotes ?? ""; pastNotesFor = s.id } }
+        .onChange(of: selectedId) { _, _ in pastNotesDraft = selected?.userNotes ?? ""; pastNotesFor = selected?.id }
+        // Enrichment finished → reload the draft with the enriched text from the DB.
+        .onChange(of: store.pastNotesEnriching) { old, new in
+            if old == s.id, new == nil { pastNotesDraft = (sessions.sessions.first { $0.id == s.id }?.userNotes) ?? pastNotesDraft; pastNotesFor = s.id }
         }
     }
 

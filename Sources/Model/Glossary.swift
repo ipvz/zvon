@@ -45,7 +45,19 @@ final class GlossaryStore: ObservableObject {
         add(GlossaryTerm(canonical: canonical, variants: variants))
     }
 
-    private var enabledTerms: [GlossaryTerm] { terms.filter { $0.enabled && !$0.canonical.isEmpty } }
+    /// Transient names for the CURRENT meeting (e.g. calendar attendees) — corrected + hinted like any
+    /// term, but never persisted, so they don't permanently bloat the user glossary. Cleared per session.
+    @Published private(set) var sessionTerms: [String] = []
+    func setSessionTerms(_ names: [String]) {
+        let clean = names.map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.count >= 4 }
+        guard clean != sessionTerms else { return }
+        sessionTerms = clean; rebuild()
+    }
+
+    private var enabledTerms: [GlossaryTerm] {
+        terms.filter { $0.enabled && !$0.canonical.isEmpty }
+            + sessionTerms.map { GlossaryTerm(canonical: $0) }
+    }
 
     // MARK: LLM prompt hint
 
