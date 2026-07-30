@@ -14,6 +14,7 @@ struct SessionRecord: Codable, Identifiable, Equatable {
     var noteSummary: [String]?    // cached ✦ Итог bullets, if any
     var noteDecisions: [String]?  // «Решения» section, persisted so it survives after the meeting
     var noteTopics: [String]?     // «Темы» tags
+    var userNotes: String? = nil  // «Мои заметки» — the user's own notes (optionally AI-enriched)
 
     /// Sidebar sub-line: "11:20 · 41 мин" for meetings, "Диктовка · 13:05" for snippets.
     var subtitle: String {
@@ -58,10 +59,18 @@ final class SessionStore: ObservableObject {
 
     func addMeeting(id: UUID = UUID(), title: String, date: Date, durationSec: Double, hasSummary: Bool,
                     transcript: String, noteSummary: [String]?,
-                    noteDecisions: [String]? = nil, noteTopics: [String]? = nil) {
+                    noteDecisions: [String]? = nil, noteTopics: [String]? = nil, userNotes: String? = nil) {
         insert(SessionRecord(id: id, kind: .meeting, title: title, date: date, durationSec: durationSec,
                              hasSummary: hasSummary, transcript: transcript, noteSummary: noteSummary,
-                             noteDecisions: noteDecisions, noteTopics: noteTopics))
+                             noteDecisions: noteDecisions, noteTopics: noteTopics, userNotes: userNotes))
+    }
+
+    /// Edit a past record's own notes (write-back for the «Мои заметки» editor). Reassigns the array
+    /// element so @Published fires, and upserts the row (db.insert is INSERT OR REPLACE).
+    func updateUserNotes(_ id: UUID, _ text: String) {
+        guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
+        sessions[i].userNotes = text.isEmpty ? nil : text
+        db?.insert(sessions[i])
     }
 
     func addDictation(text: String, date: Date) {

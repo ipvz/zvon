@@ -24,9 +24,13 @@ final class SessionDB {
               transcript TEXT,
               noteSummary TEXT,
               noteDecisions TEXT,
-              noteTopics TEXT
+              noteTopics TEXT,
+              userNotes TEXT
             );
         """)
+        // Migrate an existing (pre-userNotes) DB: add the column if it's missing. On a fresh DB the
+        // column already exists → SQLite returns "duplicate column", which exec() harmlessly ignores.
+        exec("ALTER TABLE sessions ADD COLUMN userNotes TEXT;")
         exec("CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date DESC);")
     }
 
@@ -42,8 +46,8 @@ final class SessionDB {
     func insert(_ r: SessionRecord) {
         let sql = """
             INSERT OR REPLACE INTO sessions
-            (id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics)
-            VALUES (?,?,?,?,?,?,?,?,?,?);
+            (id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics,userNotes)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?);
         """
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
@@ -58,6 +62,7 @@ final class SessionDB {
         bindOpt(s, 8, jsonArray(r.noteSummary))
         bindOpt(s, 9, jsonArray(r.noteDecisions))
         bindOpt(s, 10, jsonArray(r.noteTopics))
+        bindOpt(s, 11, r.userNotes)
         sqlite3_step(s)
     }
 
@@ -72,7 +77,7 @@ final class SessionDB {
     /// Every record, newest first — mirrors the old in-memory ordering.
     func all() -> [SessionRecord] {
         var out: [SessionRecord] = []
-        let sql = "SELECT id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics FROM sessions ORDER BY date DESC;"
+        let sql = "SELECT id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics,userNotes FROM sessions ORDER BY date DESC;"
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
         guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return out }
@@ -87,6 +92,7 @@ final class SessionDB {
             r.noteSummary = array(text(s, 7))
             r.noteDecisions = array(text(s, 8))
             r.noteTopics = array(text(s, 9))
+            r.userNotes = text(s, 10)
             out.append(r)
         }
         return out
