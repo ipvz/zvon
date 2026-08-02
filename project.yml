@@ -47,6 +47,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.parley.app
         PRODUCT_NAME: ZVON
+        SWIFT_OBJC_BRIDGING_HEADER: Support/ZVON-Bridging-Header.h
+        SWIFT_INCLUDE_PATHS: Sources/Util
         INFOPLIST_FILE: Support/Info.plist
         CODE_SIGN_ENTITLEMENTS: Support/Parley.entitlements
         GENERATE_INFOPLIST_FILE: NO

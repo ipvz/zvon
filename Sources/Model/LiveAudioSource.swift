@@ -48,19 +48,30 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
 
     func start() throws {
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
-        try processor.startRecordingLive { [weak self] chunk in
-            guard let self else { return }
-            // Audio thread, same call that appended `chunk` to the processor's own buffer.
-            self.lock.lock()
-            self.buffer.append(contentsOf: chunk)
-            var s: Float = 0; for v in chunk { s += v * v }
-            let rms = chunk.isEmpty ? 0 : (s / Float(chunk.count)).squareRoot()
-            self.energy.append(min(1, rms * 14))   // rough 0…1 level for the meters
-            if self.energy.count > 16 { self.energy.removeFirst(self.energy.count - 16) }
-            self.lock.unlock()
-            // Keep WhisperKit's internal (unread) buffer from growing all session — safe on this thread.
-            self.processor.purgeAudioSamples(keepingLast: Self.internalCap)
+        // AVFAudio's installTapOnBus (inside startRecordingLive) raises an ObjC NSException when the mic
+        // input is unavailable / the device changed / a tap is still attached from a too-fast restart.
+        // Swift `try` can't catch that — it would abort the app. Bridge it to a Swift error instead so
+        // the pipeline surfaces "микрофон недоступен" and the session ends cleanly.
+        var swiftError: Error?
+        let nsError = zvonCatchNSException {
+            do {
+                try self.processor.startRecordingLive { [weak self] chunk in
+                    guard let self else { return }
+                    // Audio thread, same call that appended `chunk` to the processor's own buffer.
+                    self.lock.lock()
+                    self.buffer.append(contentsOf: chunk)
+                    var s: Float = 0; for v in chunk { s += v * v }
+                    let rms = chunk.isEmpty ? 0 : (s / Float(chunk.count)).squareRoot()
+                    self.energy.append(min(1, rms * 14))   // rough 0…1 level for the meters
+                    if self.energy.count > 16 { self.energy.removeFirst(self.energy.count - 16) }
+                    self.lock.unlock()
+                    // Keep WhisperKit's internal (unread) buffer from growing all session — safe here.
+                    self.processor.purgeAudioSamples(keepingLast: Self.internalCap)
+                }
+            } catch { swiftError = error }
         }
+        if let nsError { throw nsError }
+        if let swiftError { throw swiftError }
     }
 
     func stop() {
