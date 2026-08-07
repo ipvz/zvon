@@ -75,7 +75,7 @@ struct MeetingView: View {
         .frame(maxWidth: 380)
         .background(Color.pCard, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.pLine, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 16, y: 6)
+        .shadow(color: .pShadow1, radius: 16, y: 6)
         .padding(.top, 48).padding(.trailing, 18)   // clear the traffic-light band
         .transition(.move(edge: .top).combined(with: .opacity))
     }

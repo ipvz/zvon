@@ -38,6 +38,10 @@ final class TranscriptStore: ObservableObject {
     @Published var meetingTitle: String?         // auto-title from the current calendar event
     var currentEvent: CalendarEvent?             // attendees + join link for the live session
     @Published var calendarEnabled = true { didSet { UserDefaults.standard.set(calendarEnabled, forKey: "calendarEnabled") } }
+    // A floating nudge when a meeting starts — the in-window radar banner is invisible while the
+    // main window is behind the call, which is exactly when the recording gets forgotten.
+    @Published var meetingPromptEnabled = true { didSet { UserDefaults.standard.set(meetingPromptEnabled, forKey: "meetingPromptEnabled") } }
+    @Published var meetingPromptSound = true { didSet { UserDefaults.standard.set(meetingPromptSound, forKey: "meetingPromptSound") } }
 
     // Live LLM notes
     @Published var notes = MeetingNotes()
@@ -164,6 +168,8 @@ final class TranscriptStore: ObservableObject {
         totalDictatedWords = d.integer(forKey: "totalDictatedWords")
         onboardingDone = d.bool(forKey: "onboardingDone")
         calendarEnabled = d.object(forKey: "calendarEnabled") == nil ? true : d.bool(forKey: "calendarEnabled")
+        meetingPromptEnabled = d.object(forKey: "meetingPromptEnabled") == nil ? true : d.bool(forKey: "meetingPromptEnabled")
+        meetingPromptSound = d.object(forKey: "meetingPromptSound") == nil ? true : d.bool(forKey: "meetingPromptSound")
 
         pipeline = SpeechPipeline(
             onStatus: { [weak self] status in

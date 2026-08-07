@@ -60,6 +60,23 @@ extension Color {
     static let pWidgetBG = parley(0xFFFFFF, 0x101817)         // widget panel body
     static let pStatusLocal = parley(0x007D7E, 0x3E9D9D)      // «локально» — muted teal status text
     static let pMicBubbleText = parley(0x0C1413, 0xDFF7F7)    // text inside the accent mic bubble
+
+    // Elevation. The spec's shadow alphas were authored against the DARK widget (#101817); reused
+    // verbatim in Light they read as a grey smudge around every floating card — the surface is
+    // white, the desktop behind it is light, and 28–50% black has nothing to sink into. Same
+    // geometry, much softer alpha in Light. Three tiers, nothing else.
+    private static func shadowInk(light: CGFloat, dark: CGFloat) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(srgbRed: 0, green: 0, blue: 0, alpha: isDark ? dark : light)
+        })
+    }
+    static let pShadow1 = shadowInk(light: 0.07, dark: 0.22)   // resting card on canvas
+    static let pShadow2 = shadowInk(light: 0.10, dark: 0.30)   // floating widget, dictation pills
+    static let pShadow3 = shadowInk(light: 0.14, dark: 0.48)   // modal-weight overlay
+    // Control-scale lift (segmented thumb): a 3px radius needs a firmer alpha than a surface, and
+    // in Dark the old flat 14% black under a dark thumb was invisible.
+    static let pShadowControl = shadowInk(light: 0.14, dark: 0.36)
 }
 
 // MARK: - Typography (system font; max 5 sizes)

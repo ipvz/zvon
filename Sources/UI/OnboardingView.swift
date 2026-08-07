@@ -34,7 +34,7 @@ struct OnboardingView: View {
         .background(Color.pCard)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .overlay(RoundedRectangle(cornerRadius: 18).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: .black.opacity(0.45), radius: 40, x: 0, y: 22)
+        .shadow(color: .pShadow3, radius: 40, x: 0, y: 22)
     }
 
     @ViewBuilder private var content: some View {

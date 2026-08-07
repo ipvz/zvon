@@ -68,6 +68,83 @@ struct TaskReminderView: View {
     }
 }
 
+// MARK: - Meeting prompt card (floating nudge when a calendar meeting starts)
+
+struct MeetingPromptView: View {
+    let controller: MeetingPromptController
+    let event: CalendarEvent
+    @ObservedObject private var store = TranscriptStore.shared
+    @ObservedObject private var loc = L11n.shared
+
+    private static let clock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"; return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                Circle().fill(Color.pRecording).frame(width: 7, height: 7)
+                Text(L("Идёт встреча", "Meeting in progress"))
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(Color.pInk3)
+                Spacer(minLength: 8)
+                Button { controller.dismiss(remember: true) } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.pInk3)
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("Скрыть до конца встречи", "Hide for this meeting"))
+                .accessibilityLabel(L("Скрыть", "Dismiss"))
+            }
+            .padding(.horizontal, 14).padding(.top, 11).padding(.bottom, 9)
+
+            Hairline(color: .pLine2)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(event.title)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Color.pInk1)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Text("\(Self.clock.string(from: event.start))–\(Self.clock.string(from: event.end))")
+                        .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                    if !event.attendees.isEmpty {
+                        Text("·").font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                        Text("\(event.attendees.count) \(MeetingView.plural(event.attendees.count, "участник", "участника", "участников"))")
+                            .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Hairline(color: .pLine2)
+
+            HStack(spacing: 8) {
+                Button { controller.snooze() } label: {
+                    Text(L("Позже", "Later")).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk2)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+                }.buttonStyle(.plain)
+                Button { controller.startRecording() } label: {
+                    Text(L("Начать запись", "Start recording"))
+                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pAccent.opacity(store.canRecord ? 1 : 0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .disabled(!store.canRecord)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+        }
+        .frame(width: 320)
+        .background(Color.pWidgetBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+    }
+}
+
 // MARK: - Floating widget root (puck ↔ compact ↔ expanded, + error)
 
 struct WidgetRootView: View {
@@ -138,7 +215,7 @@ struct PuckView: View {
         }
         .frame(width: 62, height: 62)
         .clipShape(RoundedRectangle(cornerRadius: PRadius.puck, style: .continuous))
-        .shadow(color: Color.black.opacity(0.22), radius: 10, x: 0, y: 8)
+        .shadow(color: .pShadow1, radius: 10, x: 0, y: 8)
     }
 
     @ViewBuilder private var bottomChip: some View {
@@ -415,7 +492,7 @@ private struct WidgetPanelChrome: ViewModifier {
             .background(Color.pWidgetBG)
             .clipShape(RoundedRectangle(cornerRadius: PRadius.widget, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: PRadius.widget, style: .continuous).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-            .shadow(color: Color.black.opacity(0.28), radius: 18, x: 0, y: 12)
+            .shadow(color: .pShadow2, radius: 18, x: 0, y: 12)
             .padding(20)   // clears the shadow so it never clips into a hard rectangle
     }
 }
@@ -478,7 +555,7 @@ struct CommandRunCard: View {
         .padding(.horizontal, 16).frame(height: 40)
         .background(Color.pCard).clipShape(Capsule())
         .overlay(Capsule().strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.4), radius: 12, x: 0, y: 6)
+        .shadow(color: .pShadow3, radius: 12, x: 0, y: 6)
     }
 
     private func confirm(_ cmd: CommandItem) -> some View {
@@ -507,7 +584,7 @@ struct CommandRunCard: View {
         .frame(width: 360, alignment: .leading)
         .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.5), radius: 24, x: 0, y: 12)
+        .shadow(color: .pShadow3, radius: 24, x: 0, y: 12)
     }
 }
 
@@ -540,7 +617,7 @@ struct ProcessingPill: View {
             }
         )
         .clipShape(Capsule())
-        .shadow(color: Color.black.opacity(0.30), radius: 14, x: 0, y: 10)
+        .shadow(color: .pShadow2, radius: 14, x: 0, y: 10)
         .onAppear { withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) { sweep = true } }
     }
 }
@@ -566,7 +643,7 @@ struct SpectrogramPill: View {
         }
         .padding(.horizontal, 18).padding(.vertical, 11)
         .background(PillC.bg).clipShape(Capsule())
-        .shadow(color: Color.black.opacity(0.30), radius: 17, x: 0, y: 14)
+        .shadow(color: .pShadow2, radius: 17, x: 0, y: 14)
     }
 }
 
@@ -634,7 +711,7 @@ struct NoFieldCard: View {
         .frame(width: 360, alignment: .leading)
         .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.5), radius: 24, x: 0, y: 12)
+        .shadow(color: .pShadow3, radius: 24, x: 0, y: 12)
     }
     private func copy() {
         let pb = NSPasteboard.general; pb.clearContents(); pb.setString(text, forType: .string)
@@ -676,7 +753,7 @@ struct TaskCreatedCard: View {
         .frame(width: 360, alignment: .leading)
         .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
-        .shadow(color: Color.black.opacity(0.5), radius: 24, x: 0, y: 12)
+        .shadow(color: .pShadow3, radius: 24, x: 0, y: 12)
     }
     private func openTasks() {
         NSApp.activate(ignoringOtherApps: true)

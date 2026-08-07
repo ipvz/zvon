@@ -559,3 +559,126 @@ final class TaskReminderController {
         panel = p
     }
 }
+
+// MARK: - Meeting prompt (a floating «Начать запись» when a calendar meeting starts)
+
+/// The radar banner inside `MeetingView` only exists while the main window is on screen — which is
+/// never the case during a call, so the recording gets forgotten. This mirrors it as a floating
+/// panel and stands down whenever the main window is frontmost (no duplicate nudge).
+@MainActor
+final class MeetingPromptController {
+    private let store: TranscriptStore
+    private var panel: NSPanel?
+    private var cancellables: Set<AnyCancellable> = []
+    private var shownKey: String?          // meeting currently on screen
+    private var soundedKey: String?        // meeting we already chimed for
+    private var snoozedKey: String?        // «Позже» — hushed until `snoozedUntil`
+    private var snoozedUntil: Date?
+
+    init(store: TranscriptStore) {
+        self.store = store
+
+        store.$suggestedMeeting
+            .sink { [weak self] _ in Task { @MainActor in self?.update() } }
+            .store(in: &cancellables)
+        store.$isRecording
+            .sink { [weak self] _ in Task { @MainActor in self?.update() } }
+            .store(in: &cancellables)
+        store.$meetingPromptEnabled
+            .sink { [weak self] _ in Task { @MainActor in self?.update() } }
+            .store(in: &cancellables)
+
+        // Focus changes don't touch the store, but they decide whether this panel or the in-window
+        // banner is the right surface — so re-evaluate on both.
+        for name in [NSApplication.didResignActiveNotification, NSApplication.didBecomeActiveNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.update() }
+            }
+        }
+    }
+
+    private static var cue: NSSound? = {
+        for ext in ["m4a", "wav", "aiff", "mp3"] {
+            if let url = Bundle.main.url(forResource: "reminder", withExtension: ext),
+               let s = NSSound(contentsOf: url, byReference: true) { return s }
+        }
+        return NSSound(named: "Ping")
+    }()
+
+    /// True while the user is looking at the app — the in-window radar banner covers that case.
+    private var mainWindowFrontmost: Bool {
+        guard NSApp.isActive else { return false }
+        return NSApp.windows.contains { $0.identifier?.rawValue == "main" && $0.isVisible && $0.isKeyWindow }
+    }
+
+    /// Always reads the store: every caller hops through `Task { @MainActor }` first, so the
+    /// `@Published` value has already landed by the time this runs.
+    private func update() {
+        guard store.meetingPromptEnabled, let ev = store.suggestedMeeting,
+              !store.isRecording, !store.isDictating,
+              !mainWindowFrontmost else {
+            dismiss(remember: false); return
+        }
+        if let key = snoozedKey, key == ev.key, let until = snoozedUntil, Date() < until {
+            dismiss(remember: false); return
+        }
+        guard shownKey != ev.key || panel == nil else { return }   // already up for this meeting
+        if store.meetingPromptSound, soundedKey != ev.key {
+            soundedKey = ev.key
+            Self.cue?.stop(); Self.cue?.play()
+        }
+        present(ev)
+    }
+
+    func startRecording() {
+        store.recordSuggestedMeeting()
+        NSApp.activate(ignoringOtherApps: true)
+        for w in NSApp.windows where w.identifier?.rawValue == "main" { w.makeKeyAndOrderFront(nil) }
+        dismiss(remember: false)
+    }
+
+    /// «Позже» — hush this meeting for 5 minutes, then nudge again (it's still running).
+    func snooze() {
+        snoozedKey = shownKey
+        snoozedUntil = Date().addingTimeInterval(5 * 60)
+        dismiss(remember: false)
+    }
+
+    /// `remember: true` is the ✕ — the store stops suggesting this meeting entirely.
+    func dismiss(remember: Bool) {
+        panel?.orderOut(nil)
+        panel = nil
+        shownKey = nil
+        if remember { store.dismissSuggestedMeeting() }
+    }
+
+    private func present(_ ev: CalendarEvent) {
+        panel?.orderOut(nil)
+        let host = NSHostingController(rootView: MeetingPromptView(controller: self, event: ev))
+        host.sizingOptions = .preferredContentSize
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 200),
+                        styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        p.level = .floating
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
+        p.contentViewController = host
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = NSColor.clear.cgColor
+        // Top-right, where the in-window radar banner sits — same mental location, clear of the
+        // task reminder (top-centre) so the two can coexist.
+        if let screen = NSScreen.main {
+            let v = screen.visibleFrame
+            let size = host.view.fittingSize
+            p.setContentSize(size)
+            p.setFrameOrigin(NSPoint(x: v.maxX - size.width - 18, y: v.maxY - size.height - 24))
+        }
+        p.invalidateShadow()          // borderless + transparent backing keeps a stale square shadow otherwise
+        p.orderFrontRegardless()
+        panel = p
+        shownKey = ev.key
+    }
+}

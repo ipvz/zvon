@@ -455,7 +455,7 @@ struct RecordFilterBar: View {
                     .background {
                         if active {
                             RoundedRectangle(cornerRadius: 8).fill(Color.pCard)
-                                .shadow(color: .black.opacity(0.14), radius: 3, x: 0, y: 1)
+                                .shadow(color: .pShadowControl, radius: 3, x: 0, y: 1)
                                 .matchedGeometryEffect(id: "seg", in: ns)
                         }
                     }

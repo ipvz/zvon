@@ -398,6 +398,18 @@ struct ParleySettingsView: View {
                     ParleyToggle(on: $store.calendarEnabled)
                 }
                 PDivider()
+                PRow(L("Напоминать о начале встречи", "Nudge when a meeting starts"),
+                     sub: L("Карточка поверх других окон с кнопкой «Начать запись»",
+                            "A floating card with a Start recording button")) {
+                    ParleyToggle(on: $store.meetingPromptEnabled)
+                }
+                if store.meetingPromptEnabled {
+                    PDivider()
+                    PRow(L("Звук напоминания о встрече", "Meeting nudge sound")) {
+                        ParleyToggle(on: $store.meetingPromptSound)
+                    }
+                }
+                PDivider()
                 PRow(L("Доступ к календарю", "Calendar access")) {
                     if calAuth {
                         Label(L("Разрешён", "Granted"), systemImage: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(Color.pSuccess)
