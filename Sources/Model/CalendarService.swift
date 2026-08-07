@@ -67,11 +67,25 @@ final class CalendarService {
         return s
     }
 
+    /// Conferencing hosts we recognise. Kept deliberately host-specific — a bare "https://…" in the
+    /// notes is far more often a doc or a ticket than a call, and a false positive here nags the
+    /// user about a meeting that isn't one.
     private static let linkPatterns = [
         "telemost\\.yandex\\.ru/[\\w-]+",
         "[a-z0-9.]*zoom\\.us/j/\\d+[^\\s]*",
         "meet\\.google\\.com/[a-z-]+",
         "teams\\.microsoft\\.com/[^\\s]+",
+        "talk\\.kontur\\.ru/[^\\s]+",              // Контур.Толк
+        "jazz\\.sber\\.ru/[^\\s]+",                // SberJazz
+        "[a-z0-9.-]*mts-link\\.ru/[^\\s]+",        // МТС Линк (ex-Webinar.ru)
+        "[a-z0-9.-]*dion\\.vc/[^\\s]+",            // Dion
+        "meet\\.jit\\.si/[^\\s]+",
+        "[a-z0-9.-]*whereby\\.com/[^\\s]+",
+        "[a-z0-9.-]*webex\\.com/[^\\s]+",
+        "[a-z0-9.-]*pruffme\\.com/[^\\s]+",
+        "videomost\\.com/[^\\s]+",
+        "calls\\.vk\\.com/[^\\s]+",
+        "[a-z0-9.-]*ktalk\\.ru/[^\\s]+",           // Контур.Толк (короткий домен)
     ]
     private static func joinLink(from e: EKEvent) -> URL? {
         if let u = e.url, linkPatterns.contains(where: { u.absoluteString.range(of: $0, options: .regularExpression) != nil }) { return u }

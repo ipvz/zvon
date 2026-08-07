@@ -289,6 +289,22 @@ final class TranscriptStore: ObservableObject {
         finals.map { "\($0.speaker.title): \($0.text)" }.joined(separator: "\n")
     }
 
+    static let turnClock: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
+    /// Archive shape: every turn carries the wall-clock time it was spoken, so a protocol can state
+    /// WHEN something was said and not merely in what order. `transcriptText()` stays stamp-free —
+    /// the note/dictation prompts are tuned on that shape and a stamp per line only dilutes them.
+    /// Lines saved before this existed simply have no prefix; readers treat the stamp as optional.
+    private func transcriptTimedText() -> String {
+        guard let base = recordingStartedAt else { return transcriptText() }
+        return finals.map { l in
+            let clock = Self.turnClock.string(from: base.addingTimeInterval(max(0, l.startSec)))
+            return "[\(clock)] \(l.speaker.title): \(l.text)"
+        }.joined(separator: "\n")
+    }
+
     /// Instant local task creation when the speaker says a trigger phrase — complements the LLM
     /// extraction with deterministic "I said it → it exists" feedback. Meetings only.
     /// STEM match, not exact phrases — the ASR spells the verb many ways («создай/создая/создать
@@ -741,7 +757,9 @@ final class TranscriptStore: ObservableObject {
         radarTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.checkMeetingRadar()
-                try? await Task.sleep(nanoseconds: 60_000_000_000)   // re-check every 60s
+                // 15s, not 60s: the nudge is worth nothing if it lands a minute into the call, and
+                // the EventKit query is local + cheap.
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
             }
         }
     }
@@ -1060,7 +1078,7 @@ final class TranscriptStore: ObservableObject {
             date: recordingStartedAt ?? Date(),
             durationSec: duration,
             hasSummary: !notes.isEmpty,
-            transcript: transcriptText(),
+            transcript: transcriptTimedText(),
             noteSummary: notes.summary.isEmpty ? nil : notes.summary,
             noteDecisions: notes.decisions.isEmpty ? nil : notes.decisions,
             noteTopics: notes.topics.isEmpty ? nil : notes.topics,

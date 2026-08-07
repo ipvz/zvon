@@ -156,8 +156,10 @@ struct MeetingView: View {
         if viewingPast, let s = selected, s.kind == .dictation { return s.title }
         let e = currentExport()
         var m = e.shareText()
-        let tr = e.transcript.map { "\($0.role): \($0.text)" }.joined(separator: "\n")
-        if !tr.isEmpty { m += "\n\nРАСШИФРОВКА:\n" + tr }
+        let tr = e.timedTranscript()
+        if !tr.isEmpty {
+            m += "\n\nРАСШИФРОВКА (в квадратных скобках — время, когда реплика прозвучала):\n" + tr
+        }
         return m
     }
 
@@ -1243,12 +1245,21 @@ struct MeetingView: View {
     private func currentExport() -> MeetingExport {
         if viewingPast, let s = selected {
             let turns: [MeetingExport.Turn] = (s.transcript ?? "")
-                .split(separator: "\n", omittingEmptySubsequences: true).map { line in
+                .split(separator: "\n", omittingEmptySubsequences: true).map { raw in
+                    // Archived lines look like "[14:32:05] Собеседник: …". Recordings made before
+                    // turn times were persisted have no prefix, so the stamp stays nil.
+                    var line = Substring(raw)
+                    var stamp: String?
+                    if line.hasPrefix("["), let close = line.firstIndex(of: "]") {
+                        stamp = String(line[line.index(after: line.startIndex)..<close])
+                        line = line[line.index(after: close)...].drop(while: { $0 == " " })
+                    }
                     if let c = line.firstIndex(of: ":") {
                         return .init(role: String(line[..<c]).trimmingCharacters(in: .whitespaces),
-                                     text: String(line[line.index(after: c)...]).trimmingCharacters(in: .whitespaces))
+                                     text: String(line[line.index(after: c)...]).trimmingCharacters(in: .whitespaces),
+                                     stamp: stamp)
                     }
-                    return .init(role: "", text: String(line))
+                    return .init(role: "", text: String(line), stamp: stamp)
                 }
             let tasks = taskStore.forSession(s.id).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
             return MeetingExport(title: s.title, date: s.date, durationSec: s.durationSec, participants: [],
@@ -1256,7 +1267,11 @@ struct MeetingView: View {
                                  tasks: tasks, transcript: turns, includeTranscript: false)
         }
         let parts = Array(Set(store.lines.map(\.speaker.title))).sorted()
-        let turns = store.lines.map { MeetingExport.Turn(role: $0.speaker.title, text: $0.text) }
+        let base = store.recordingStartedAt
+        let turns = store.lines.map { l in
+            MeetingExport.Turn(role: l.speaker.title, text: l.text,
+                               stamp: base.map { TranscriptStore.turnClock.string(from: $0.addingTimeInterval(max(0, l.startSec))) })
+        }
         let tasks = taskStore.forSession(store.currentSessionId).map { MeetingExport.TaskLine(text: $0.text, owner: $0.owner, due: $0.due, done: $0.done) }
         return MeetingExport(title: store.meetingTitle ?? store.notes.topics.first ?? L("Встреча", "Meeting"),
                              date: store.recordingStartedAt ?? Date(),

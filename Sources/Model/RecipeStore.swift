@@ -24,10 +24,31 @@ final class RecipeStore: ObservableObject {
                prompt: "Составь вежливое деловое письмо по итогам встречи: короткое резюме договорённостей, ключевые решения, следующие шаги с ответственными и сроками. Деловой тон, готово к отправке. Без выдуманных фактов.",
                builtin: true),
         Recipe(name: "Протокол", icon: "doc.text",
-               prompt: "Составь официальный протокол встречи: участники, обсуждённые темы по пунктам, принятые решения, поручения (кто · что · срок). Чётко и структурно.",
+               prompt: """
+               Составь официальный протокол встречи.
+
+               Шапка: название, дата и время проведения, длительность, участники, время формирования \
+               протокола. Все эти данные возьми из блока материалов дословно — не вычисляй и не выдумывай.
+
+               Далее разделы:
+               1. Хронология — ключевые моменты в порядке, в каком они прозвучали, каждый со временем \
+               в формате [ЧЧ:ММ]. Только то, где что-то решили, о чём-то договорились, подняли новую \
+               тему или зафиксировали возражение. Это не пересказ расшифровки целиком.
+               2. Обсуждённые темы по пунктам.
+               3. Принятые решения.
+               4. Поручения: кто · что · срок.
+
+               Время бери ТОЛЬКО из квадратных скобок в расшифровке. Если у реплики времени нет — \
+               не указывай его и ничего не додумывай. Чётко, структурно, без выдуманных фактов.
+               """,
                builtin: true),
         Recipe(name: "Тезисы в Telegram", icon: "paperplane",
-               prompt: "Составь компактную сводку для мессенджера: 3–6 буллетов главного + решения + задачи. Коротко, живо, без воды.",
+               prompt: """
+               Составь компактную сводку для мессенджера. Первой строкой — название встречи, дата и \
+               время из материалов. Затем 3–6 буллетов главного, решения и задачи. Ключевые моменты \
+               помечай временем [ЧЧ:ММ] из расшифровки, если оно там есть. Коротко, живо, без воды \
+               и без выдуманных фактов.
+               """,
                builtin: true),
         Recipe(name: "Черновик ТЗ / PRD", icon: "list.bullet.rectangle",
                prompt: "На основе обсуждения составь черновик ТЗ/PRD: цель, контекст и проблема, требования, объём, открытые вопросы, следующие шаги. Отметь, чего не хватает для полноты.",
@@ -69,6 +90,34 @@ final class RecipeStore: ObservableObject {
         recipes.append(contentsOf: missing); save()
     }
 
+    /// Prompts shipped by earlier versions. A seeded recipe still carrying one of these verbatim was
+    /// never touched by the user, so upgrading it in place is safe; anything else is their own
+    /// wording and is left exactly as it is.
+    private static let supersededPrompts: [String: Set<String>] = [
+        "протокол": [
+            "Составь официальный протокол встречи: участники, обсуждённые темы по пунктам, принятые решения, поручения (кто · что · срок). Чётко и структурно.",
+        ],
+        "тезисы в telegram": [
+            "Составь компактную сводку для мессенджера: 3–6 буллетов главного + решения + задачи. Коротко, живо, без воды.",
+        ],
+    ]
+
+    /// Seeded recipes live in UserDefaults from first run, so editing `builtins` alone would never
+    /// reach an existing install. Rewrite only the ones the user never edited.
+    private func upgradeUneditedBuiltins() {
+        var changed = false
+        for i in recipes.indices {
+            let key = recipes[i].name.lowercased()
+            guard let old = Self.supersededPrompts[key],
+                  old.contains(recipes[i].prompt.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  let fresh = Self.builtins.first(where: { $0.name.lowercased() == key })
+            else { continue }
+            recipes[i].prompt = fresh.prompt
+            changed = true
+        }
+        if changed { save() }
+    }
+
     private func load() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let items = try? JSONDecoder().decode([Recipe].self, from: data) {
@@ -82,6 +131,7 @@ final class RecipeStore: ObservableObject {
             UserDefaults.standard.set(true, forKey: Self.seededKey)
             save()
         }
+        upgradeUneditedBuiltins()
     }
     private func save() {
         if let data = try? JSONEncoder().encode(recipes) { UserDefaults.standard.set(data, forKey: Self.key) }

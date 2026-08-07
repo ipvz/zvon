@@ -13,9 +13,14 @@ struct MeetingExport {
     var tasks: [TaskLine]
     var transcript: [Turn]
     var includeTranscript: Bool
+    /// When this artifact was produced — a protocol has to say when it was written, separately
+    /// from when the meeting happened.
+    var generatedAt: Date = Date()
 
     struct TaskLine { var text: String; var owner: String?; var due: String?; var done: Bool }
-    struct Turn { var role: String; var text: String }
+    /// `stamp` is the wall-clock time the turn was spoken ("14:32:05"), nil for older records
+    /// saved before turn times were persisted.
+    struct Turn { var role: String; var text: String; var stamp: String? = nil }
 
     private static let dateFmt: DateFormatter = {
         let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMMM yyyy, HH:mm"; return f
@@ -26,14 +31,35 @@ struct MeetingExport {
         if !participants.isEmpty { p.append("\(participants.count) уч.") }
         return p.joined(separator: " · ")
     }
+    /// Meeting window as a range — "14:30 – 15:12" — so the reader sees start AND end, not just start.
+    private static let clockFmt: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "HH:mm"; return f
+    }()
+    private var window: String? {
+        guard let d = durationSec, d > 0 else { return nil }
+        return "\(Self.clockFmt.string(from: date)) – \(Self.clockFmt.string(from: date.addingTimeInterval(d)))"
+    }
+    private var generatedLine: String { "Протокол сформирован: " + Self.dateFmt.string(from: generatedAt) }
+    private func turnLine(_ t: Turn) -> String {
+        let head = [t.stamp, t.role.isEmpty ? nil : t.role].compactMap { $0 }.joined(separator: " ")
+        return head.isEmpty ? t.text : "\(head): \(t.text)"
+    }
     private func taskMeta(_ t: TaskLine) -> String {
         [t.owner, t.due].compactMap { $0 }.filter { !$0.isEmpty && $0.lowercased() != "null" }.joined(separator: " · ")
     }
 
+    /// Chronological transcript, one turn per line, each carrying the time it was spoken. This is
+    /// what a timeline-aware artifact (protocol, minutes) needs as raw input — without it the model
+    /// has nothing to build a timeline from and can only guess an order.
+    func timedTranscript() -> String { transcript.map(turnLine).joined(separator: "\n") }
+
     // MARK: - Plain structured text (Telegram / Slack / copy — renders everywhere)
 
     func shareText() -> String {
-        var out = [title, meta, ""]
+        var out = [title, meta]
+        if let w = window { out.append("Время встречи: " + w) }
+        out.append(generatedLine)
+        out.append("")
         func sec(_ h: String, _ items: [String]) {
             guard !items.isEmpty else { return }
             out.append(h.uppercased()); out.append(contentsOf: items.map { "• \($0)" }); out.append("")
@@ -50,14 +76,17 @@ struct MeetingExport {
         }
         if includeTranscript, !transcript.isEmpty {
             out.append("РАСШИФРОВКА")
-            out.append(contentsOf: transcript.map { "\($0.role): \($0.text)" }); out.append("")
+            out.append(contentsOf: transcript.map(turnLine)); out.append("")
         }
         out.append("— ZVON")
         return out.joined(separator: "\n")
     }
 
     func markdown() -> String {
-        var out = ["# \(title)", "", "*\(meta)*", ""]
+        var out = ["# \(title)", "", "*\(meta)*"]
+        if let w = window { out.append("*Время встречи: \(w)*") }
+        out.append("*\(generatedLine)*")
+        out.append("")
         func sec(_ h: String, _ items: [String]) {
             guard !items.isEmpty else { return }
             out.append("## \(h)"); out.append(contentsOf: items.map { "- \($0)" }); out.append("")
@@ -73,7 +102,12 @@ struct MeetingExport {
             out.append("")
         }
         if includeTranscript, !transcript.isEmpty {
-            out.append("## Расшифровка"); out.append(contentsOf: transcript.map { "**\($0.role):** \($0.text)" }); out.append("")
+            out.append("## Расшифровка")
+            out.append(contentsOf: transcript.map { t in
+                let stamp = t.stamp.map { "`\($0)` " } ?? ""
+                return "\(stamp)**\(t.role):** \(t.text)"
+            })
+            out.append("")
         }
         out.append("---"); out.append("*ZVON*")
         return out.joined(separator: "\n")
@@ -104,7 +138,9 @@ struct MeetingExport {
             ]))
         }
         add(title, size: 24, weight: .semibold, color: Ink.text, style: para(0, 2))
-        add(meta, size: 11, weight: .regular, color: Ink.gray, style: para(0, 14))
+        add(meta, size: 11, weight: .regular, color: Ink.gray, style: para(0, 2))
+        if let w = window { add("Время встречи: " + w, size: 11, weight: .regular, color: Ink.gray, style: para(0, 2)) }
+        add(generatedLine, size: 11, weight: .regular, color: Ink.gray, style: para(0, 14))
 
         func section(_ header: String, _ bullets: [String]) {
             guard !bullets.isEmpty else { return }
@@ -126,7 +162,8 @@ struct MeetingExport {
         if includeTranscript, !transcript.isEmpty {
             add("РАСШИФРОВКА", size: 11, weight: .semibold, color: Ink.accent, kern: 0.8, style: para(16, 8))
             for t in transcript {
-                let a = NSMutableAttributedString(string: t.role + "  ", attributes: [
+                let head = [t.stamp, t.role].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "  ")
+                let a = NSMutableAttributedString(string: head + "  ", attributes: [
                     .font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: Ink.gray,
                     .paragraphStyle: para(0, 5, 1.3),
                 ])
