@@ -42,6 +42,11 @@ final class TranscriptStore: ObservableObject {
     // main window is behind the call, which is exactly when the recording gets forgotten.
     @Published var meetingPromptEnabled = true { didSet { UserDefaults.standard.set(meetingPromptEnabled, forKey: "meetingPromptEnabled") } }
     @Published var meetingPromptSound = true { didSet { UserDefaults.standard.set(meetingPromptSound, forKey: "meetingPromptSound") } }
+    // A recording nobody is talking into is almost always one the user forgot to stop.
+    @Published var idleStopEnabled = true { didSet { UserDefaults.standard.set(idleStopEnabled, forKey: "idleStopEnabled") } }
+    @Published var idleStopMinutes = 3 { didSet { UserDefaults.standard.set(idleStopMinutes, forKey: "idleStopMinutes") } }
+    /// When the last final line landed — the clock the idle nudge runs off.
+    @Published var lastTranscriptAt: Date?
 
     // Live LLM notes
     @Published var notes = MeetingNotes()
@@ -170,6 +175,8 @@ final class TranscriptStore: ObservableObject {
         calendarEnabled = d.object(forKey: "calendarEnabled") == nil ? true : d.bool(forKey: "calendarEnabled")
         meetingPromptEnabled = d.object(forKey: "meetingPromptEnabled") == nil ? true : d.bool(forKey: "meetingPromptEnabled")
         meetingPromptSound = d.object(forKey: "meetingPromptSound") == nil ? true : d.bool(forKey: "meetingPromptSound")
+        idleStopEnabled = d.object(forKey: "idleStopEnabled") == nil ? true : d.bool(forKey: "idleStopEnabled")
+        idleStopMinutes = d.object(forKey: "idleStopMinutes") == nil ? 3 : max(1, d.integer(forKey: "idleStopMinutes"))
 
         pipeline = SpeechPipeline(
             onStatus: { [weak self] status in
@@ -235,6 +242,7 @@ final class TranscriptStore: ObservableObject {
             let lineId = nextLineId
             let corrected = GlossaryStore.shared.correct(lightClean(text))   // consistent casing/spacing + glossary fix
             finals.append(TranscriptLine(id: lineId, speaker: speaker, text: corrected, isFinal: true, startSec: startSec + segmentBaseSec))
+            lastTranscriptAt = Date()          // someone is still talking → the idle nudge stands down
             finals.sort { $0.startSec < $1.startSec }
             rebuildLines()
             scheduleNotes()
@@ -862,6 +870,7 @@ final class TranscriptStore: ObservableObject {
         stopping = false
         status = .loadingModel
         recordingStartedAt = Date()
+        lastTranscriptAt = nil          // the idle clock runs from the start until the first line
         launchRunTask(reset: true)
     }
 

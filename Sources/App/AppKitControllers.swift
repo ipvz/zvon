@@ -560,6 +560,94 @@ final class TaskReminderController {
     }
 }
 
+// MARK: - Idle recording (a floating «Остановить?» when nobody has said anything for a while)
+
+/// Forgetting to stop is the mirror of forgetting to start: the recording runs on into an empty
+/// room and the archive fills with silence. Watches the clock since the last FINAL line — not the
+/// audio meter, which keeps twitching on room noise and would never call it quiet.
+///
+/// Deliberately silent: unlike the meeting nudge this can fire while a call is still connected,
+/// and a chime into a live meeting is worse than the problem it solves.
+@MainActor
+final class IdleStopController {
+    private let store: TranscriptStore
+    private var panel: NSPanel?
+    private var timer: Timer?
+    private var snoozedUntil: Date?
+
+    init(store: TranscriptStore) {
+        self.store = store
+        // 15s cadence: fine-grained enough for a 1-minute threshold, far too coarse to cost anything.
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    /// Idle is measured from the last line, or from the start of the recording if nothing was ever
+    /// transcribed — a session that never heard a word is exactly the case worth catching.
+    private var quietSince: Date? {
+        store.lastTranscriptAt ?? store.recordingStartedAt
+    }
+
+    private func tick() {
+        guard store.idleStopEnabled, store.isRecording, !store.isPaused, !store.isDictating,
+              let since = quietSince else { dismiss(); return }
+        if let until = snoozedUntil, Date() < until { dismiss(); return }
+
+        let threshold = TimeInterval(max(1, store.idleStopMinutes) * 60)
+        let quiet = Date().timeIntervalSince(since)
+        guard quiet >= threshold else { dismiss(); return }
+        guard panel == nil else { return }         // already asking
+        present(quietMin: Int(quiet / 60))
+    }
+
+    func stopRecording() {
+        dismiss()
+        store.stop()
+    }
+
+    /// «Продолжить» / ✕ — hush for one more idle window, then ask again if it's still quiet.
+    func snooze() {
+        snoozedUntil = Date().addingTimeInterval(TimeInterval(max(1, store.idleStopMinutes) * 60))
+        dismiss()
+    }
+
+    func dismiss() {
+        panel?.orderOut(nil)
+        panel = nil
+    }
+
+    private func present(quietMin: Int) {
+        let recorded = store.recordingStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let host = NSHostingController(
+            rootView: IdleStopView(controller: self, quietMinutes: max(1, quietMin), recordedSec: recorded))
+        host.sizingOptions = .preferredContentSize
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 160),
+                        styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
+        p.level = .floating
+        p.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
+        p.contentViewController = host
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = NSColor.clear.cgColor
+        // Top-centre: the meeting prompt owns the right corner, and these two can be up together
+        // (a second meeting starting while the first recording runs on).
+        if let screen = NSScreen.main {
+            let v = screen.visibleFrame
+            let size = host.view.fittingSize
+            p.setContentSize(size)
+            p.setFrameOrigin(NSPoint(x: v.midX - size.width / 2, y: v.maxY - size.height - 24))
+        }
+        p.invalidateShadow()
+        p.orderFrontRegardless()
+        panel = p
+    }
+}
+
 // MARK: - Meeting prompt (a floating «Начать запись» when a calendar meeting starts)
 
 /// The radar banner inside `MeetingView` only exists while the main window is on screen — which is

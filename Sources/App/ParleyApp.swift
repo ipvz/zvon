@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var dictationHold: DictationHoldController?
     private var taskReminder: TaskReminderController?
     private var meetingPrompt: MeetingPromptController?
+    private var idleStop: IdleStopController?
     private var spaceMonitor: Any?
     private var themeCancellable: AnyCancellable?
 
@@ -66,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictationHold = DictationHoldController(store: store)
         taskReminder = TaskReminderController(store: store)
         meetingPrompt = MeetingPromptController(store: store)
+        idleStop = IdleStopController(store: store)
 
         // Apply the Тема preference app-wide (SwiftUI scenes + every AppKit-hosted panel/popover).
         themeCancellable = store.$themePref.sink { pref in

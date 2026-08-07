@@ -145,6 +145,69 @@ struct MeetingPromptView: View {
     }
 }
 
+// MARK: - Idle-recording card (floating nudge when a recording has gone quiet)
+
+struct IdleStopView: View {
+    let controller: IdleStopController
+    let quietMinutes: Int
+    let recordedSec: Double
+    @ObservedObject private var loc = L11n.shared
+
+    private var recorded: String {
+        let m = Int((recordedSec / 60).rounded(.down))
+        return m < 60 ? "\(m) \(MeetingView.plural(m, "минута", "минуты", "минут"))"
+                      : "\(m / 60) ч \(m % 60) мин"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 9) {
+                ZStack {
+                    Circle().fill(Color.pRecording.opacity(0.16)).frame(width: 26, height: 26)
+                    Image(systemName: "mic.slash.fill").font(.system(size: 11)).foregroundStyle(Color.pRecording)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(L("Запись идёт, но тихо", "Recording, but silent"))
+                        .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Color.pInk1)
+                    Text(L("\(quietMinutes) \(MeetingView.plural(quietMinutes, "минута", "минуты", "минут")) без реплик · всего \(recorded)",
+                           "\(quietMinutes) min with no speech · \(recorded) total"))
+                        .font(.system(size: 11)).foregroundStyle(Color.pInk3).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button { controller.snooze() } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .semibold)).foregroundStyle(Color.pInk3)
+                        .frame(width: 24, height: 24).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("Скрыть и продолжить запись", "Hide and keep recording"))
+                .accessibilityLabel(L("Скрыть", "Dismiss"))
+            }
+            .padding(.horizontal, 14).padding(.top, 13).padding(.bottom, 11)
+
+            Hairline(color: .pLine2)
+
+            HStack(spacing: 8) {
+                Button { controller.snooze() } label: {
+                    Text(L("Продолжить", "Keep recording")).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk2)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+                }.buttonStyle(.plain)
+                Button { controller.stopRecording() } label: {
+                    Text(L("Остановить", "Stop")).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
+                        .frame(maxWidth: .infinity).frame(height: 32)
+                        .background(Color.pAccent).clipShape(RoundedRectangle(cornerRadius: 8))
+                }.buttonStyle(.plain)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+        }
+        .frame(width: 320)
+        .background(Color.pWidgetBG)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+    }
+}
+
 // MARK: - Floating widget root (puck ↔ compact ↔ expanded, + error)
 
 struct WidgetRootView: View {

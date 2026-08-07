@@ -391,6 +391,33 @@ struct ParleySettingsView: View {
                     }
                 }
             }
+            group(L("Запись", "Recording"),
+                  footnote: L("Тишина считается от последней распознанной реплики, а не от уровня звука — шум в комнате не мешает.",
+                              "Silence is measured from the last recognised line, not from the audio level — room noise doesn't count.")) {
+                PRow(L("Напоминать остановить запись", "Nudge to stop recording"),
+                     sub: L("Если долго никто не говорит, а запись всё ещё идёт",
+                            "When nobody has spoken for a while and the recording is still running")) {
+                    ParleyToggle(on: $store.idleStopEnabled)
+                }
+                if store.idleStopEnabled {
+                    PDivider()
+                    PRow(L("Через", "After")) {
+                        HStack(spacing: 3) {
+                            ForEach([(1, L("1 мин", "1 min")), (2, L("2 мин", "2 min")), (3, L("3 мин", "3 min")),
+                                     (5, L("5 мин", "5 min")), (10, L("10 мин", "10 min"))], id: \.0) { opt in
+                                let on = store.idleStopMinutes == opt.0
+                                Text(opt.1).font(.system(size: 12, weight: on ? .semibold : .regular))
+                                    .foregroundStyle(on ? Color.pAccent : Color.pInk2)
+                                    .padding(.horizontal, 10).frame(height: 26)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.pAccent.opacity(0.14) : Color.clear))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { store.idleStopMinutes = opt.0 }
+                                    .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+                            }
+                        }
+                    }
+                }
+            }
             group(L("Календарь", "Calendar"),
                   footnote: L("Добавьте Яндекс-календарь в macOS (Системные настройки → Интернет-аккаунты → CalDAV: caldav.yandex.ru, пароль приложения). ZVON возьмёт название встречи и участников — читается локально, ничего не отправляется.",
                               "Add your Yandex calendar to macOS (System Settings → Internet Accounts → CalDAV: caldav.yandex.ru, app-password). ZVON reads the meeting title and attendees — locally, nothing is sent.")) {
