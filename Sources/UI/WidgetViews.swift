@@ -92,8 +92,8 @@ struct MeetingPromptView: View {
                         .frame(width: 24, height: 24).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help(L("Скрыть до конца встречи", "Hide for this meeting"))
-                .accessibilityLabel(L("Скрыть", "Dismiss"))
+                .help(L("Больше не напоминать об этой встрече", "Stop asking about this meeting"))
+                .accessibilityLabel(L("Пропустить встречу", "Skip this meeting"))
             }
             .padding(.horizontal, 14).padding(.top, 11).padding(.bottom, 9)
 
@@ -119,13 +119,19 @@ struct MeetingPromptView: View {
 
             Hairline(color: .pLine2)
 
-            HStack(spacing: 8) {
-                Button { controller.snooze() } label: {
-                    Text(L("Позже", "Later")).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk2)
-                        .frame(maxWidth: .infinity).frame(height: 32)
-                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
-                }.buttonStyle(.plain)
+            // Two rows, not three buttons abreast: at 320pt a third label clips as soon as the
+            // wording grows, and stacking keeps exactly one obvious primary action.
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    secondary(L("Позже", "Later"),
+                              hint: L("Напомнить снова через 5 минут", "Ask again in 5 minutes")) {
+                        controller.snooze()
+                    }
+                    secondary(L("Пропустить", "Skip"),
+                              hint: L("Больше не напоминать об этой встрече", "Stop asking about this meeting")) {
+                        controller.dismiss(remember: true)
+                    }
+                }
                 Button { controller.startRecording() } label: {
                     Text(L("Начать запись", "Start recording"))
                         .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Color.pOnAccent)
@@ -142,6 +148,18 @@ struct MeetingPromptView: View {
         .background(Color.pWidgetBG)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Color.pWidgetBorder, lineWidth: 1))
+    }
+
+    private func secondary(_ title: String, hint: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk2)
+                .lineLimit(1).minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity).frame(height: 32)
+                .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .help(hint)
     }
 }
 
