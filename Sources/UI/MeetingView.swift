@@ -719,15 +719,16 @@ struct MeetingView: View {
             Text(store.isRecording ? L("Слушаю разговор…", "Listening…") : L("Транскрипт пуст.", "Transcript is empty."))
                 .font(.system(size: 13)).foregroundStyle(Color.pInk3)
         } else {
-            if let s = past, MeetingAudioRecorder.hasAudio(sessionId: s.id) {
-                AudioPlayerBar(sessionId: s.id).padding(.bottom, 6)
-            }
+            // Only a session with a track on disk is playable — a stamp on its own must not offer a
+            // play affordance that does nothing.
+            let audioId: UUID? = past.flatMap { MeetingAudioRecorder.hasAudio(sessionId: $0.id) ? $0.id : nil }
+            if let audioId { AudioPlayerBar(sessionId: audioId).padding(.bottom, 6) }
             let offsets = blocks.map(\.4)
             LazyVStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                     TranscriptBlock(speaker: b.0, text: b.1, partial: b.2,
                                     stamp: b.3, at: b.4,
-                                    until: Self.nextOffset(offsets, after: i), sessionId: past?.id)
+                                    until: Self.nextOffset(offsets, after: i), sessionId: audioId)
                 }
             }
         }
@@ -1068,11 +1069,12 @@ struct MeetingView: View {
     private func meetingDetail(_ s: SessionRecord) -> some View {
         let blocks = parseTranscript(s.transcript ?? s.title)
         let offsets = blocks.map { offsetSec($0.clock, start: s.date) }
+        // Checked ONCE here, not per row: a line is playable only if the track actually exists, and
+        // a stamp alone must not offer a play affordance that would do nothing.
+        let audioId: UUID? = MeetingAudioRecorder.hasAudio(sessionId: s.id) ? s.id : nil
         return VStack(alignment: .leading, spacing: 20) {
             participantsRow(Set(blocks.map(\.speaker).filter { !$0.isEmpty }))
-            if MeetingAudioRecorder.hasAudio(sessionId: s.id) {
-                AudioPlayerBar(sessionId: s.id)
-            }
+            if let audioId { AudioPlayerBar(sessionId: audioId) }
             let pastNotes = MeetingNotes(summary: s.noteSummary ?? [], decisions: s.noteDecisions ?? [],
                                          actions: [], topics: s.noteTopics ?? [])
             if !pastNotes.isEmpty { summaryCard(pastNotes) }   // full card: Итог + Решения + Темы
@@ -1081,7 +1083,7 @@ struct MeetingView: View {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { i, block in
                     TranscriptBlock(speaker: block.speaker, text: block.text, partial: false,
                                     stamp: block.clock, at: offsets[i],
-                                    until: Self.nextOffset(offsets, after: i), sessionId: s.id)
+                                    until: Self.nextOffset(offsets, after: i), sessionId: audioId)
                 }
             }
         }
