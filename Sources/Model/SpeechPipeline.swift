@@ -28,14 +28,17 @@ actor SpeechPipeline {
     }
 
     func start(variant: String, modelFolder: URL, language: String?, compute: ComputePreference,
-               captureSystem: Bool, dictation: Bool = false) async throws {
+               captureSystem: Bool, dictation: Bool = false,
+               recorder: MeetingAudioRecorder? = nil) async throws {
         let engine = try await ensureEngine()
         await engine.setLanguage(language.flatMap(Language.parley))
 
         let onEvent = self.onEvent
+        let micSource = MicAudioSource(AudioProcessor())
+        if let recorder { micSource.onSamples = { recorder.append($0, from: .me) } }
         let mic = UtteranceTranscriber(
             decode: { await engine.decode($0) },
-            source: MicAudioSource(AudioProcessor()),
+            source: micSource,
             // Dictation: tolerate longer thinking-pauses before ending the utterance (the key-release
             // closes it anyway) so a mid-sentence pause isn't mistaken for the end.
             config: dictation ? .dictation : UtteranceTranscriber.Config(),
@@ -45,9 +48,11 @@ actor SpeechPipeline {
 
         var sys: UtteranceTranscriber?
         if captureSystem, #available(macOS 14.2, *) {
+            let sysSource = SystemAudioSource()
+            if let recorder { sysSource.onSamples = { recorder.append($0, from: .them) } }
             sys = UtteranceTranscriber(
                 decode: { await engine.decode($0) },
-                source: SystemAudioSource(),
+                source: sysSource,
                 onEvent: { event in onEvent(.them, event) }
             )
             sysStreamer = sys

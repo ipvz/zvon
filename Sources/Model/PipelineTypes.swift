@@ -5,7 +5,7 @@ enum WidgetSize: Sendable { case puck, expanded }   // collapsed tile ↔ 376-wi
 
 /// Who is speaking. Source-based roles: the microphone is the local user, the system-audio
 /// loopback is everyone else on the call. Zero ML — 100% accurate for the 2-party split.
-enum Speaker: String, Sendable, Codable {
+enum Speaker: String, Sendable, Codable, CaseIterable {
     case me
     case them
     var title: String { self == .me ? "Вы" : "Собеседник" }

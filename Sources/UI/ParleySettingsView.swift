@@ -254,6 +254,7 @@ struct ParleySettingsView: View {
     @State private var tgChat = ""
     @State private var tgTest = ""   // "" idle · "…" testing · "ok" · error text
     @State private var calAuth = false
+    @State private var audioUsage = "—"
 
     private var llmTab: some View {
         let p = store.llmProvider
@@ -391,6 +392,36 @@ struct ParleySettingsView: View {
                     }
                 }
             }
+            group(L("Аудиозапись", "Audio recording"),
+                  footnote: L("Стерео: слева ваш микрофон, справа собеседник. Файлы лежат только на этом Mac, рядом с расшифровкой. Записывается голос собеседника — предупредите участников, если это требуется.",
+                              "Stereo: your mic on the left, the other party on the right. Files stay on this Mac next to the transcript. This captures the other party's voice — tell participants if that is required of you.")) {
+                PRow(L("Сохранять аудио встречи", "Keep meeting audio"),
+                     sub: L("Клик по реплике проигрывает её с этого момента", "Clicking a line plays it from that moment")) {
+                    ParleyToggle(on: $store.audioRecordingEnabled)
+                }
+                if store.audioRecordingEnabled {
+                    PDivider()
+                    PRow(L("Хранить", "Keep for")) {
+                        HStack(spacing: 3) {
+                            ForEach([(7, L("7 дней", "7 days")), (30, L("30 дней", "30 days")),
+                                     (90, L("90 дней", "90 days")), (0, L("Всегда", "Forever"))], id: \.0) { opt in
+                                let on = store.audioRetentionDays == opt.0
+                                Text(opt.1).font(.system(size: 12, weight: on ? .semibold : .regular))
+                                    .foregroundStyle(on ? Color.pAccent : Color.pInk2)
+                                    .padding(.horizontal, 10).frame(height: 26)
+                                    .background(RoundedRectangle(cornerRadius: 6).fill(on ? Color.pAccent.opacity(0.14) : Color.clear))
+                                    .contentShape(Rectangle())
+                                    .onTapGesture { store.audioRetentionDays = opt.0 }
+                                    .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+                            }
+                        }
+                    }
+                    PDivider()
+                    PRow(L("Занято на диске", "Disk used")) {
+                        Text(audioUsage).font(PFont.mono).foregroundStyle(Color.pInk3)
+                    }
+                }
+            }
             group(L("Запись", "Recording"),
                   footnote: L("Тишина считается от последней распознанной реплики, а не от уровня звука — шум в комнате не мешает.",
                               "Silence is measured from the last recognised line, not from the audio level — room noise doesn't count.")) {
@@ -446,7 +477,11 @@ struct ParleySettingsView: View {
                 }
             }
         }
-        .onAppear { tgToken = Telegram.token; tgChat = Telegram.chatId; calAuth = CalendarService.shared.authorized }
+        .onAppear {
+            tgToken = Telegram.token; tgChat = Telegram.chatId; calAuth = CalendarService.shared.authorized
+            let bytes = MeetingAudioRecorder.diskUsage()
+            audioUsage = bytes < 1_048_576 ? "\(bytes / 1024) КБ" : String(format: "%.1f МБ", Double(bytes) / 1_048_576)
+        }
     }
 
     private func requestCalendar() {

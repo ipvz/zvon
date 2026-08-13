@@ -68,6 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         taskReminder = TaskReminderController(store: store)
         meetingPrompt = MeetingPromptController(store: store)
         idleStop = IdleStopController(store: store)
+        // Audio is the heaviest thing on disk; prune once per launch, off the main thread.
+        let keepDays = store.audioRetentionDays
+        DispatchQueue.global(qos: .utility).async { MeetingAudioRecorder.pruneOlderThan(days: keepDays) }
 
         // Apply the Тема preference app-wide (SwiftUI scenes + every AppKit-hosted panel/popover).
         themeCancellable = store.$themePref.sink { pref in

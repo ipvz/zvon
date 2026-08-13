@@ -41,6 +41,10 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     private var buffer: [Float] = []
     private var energy: [Float] = []            // last ≤16 relative-energy frames for the level meter
     private static let internalCap = 240_000    // ~15 s @16 kHz — cap WhisperKit's own buffer growth
+    /// Optional tap for archiving the audio. Called on the audio thread with the raw chunk, before
+    /// any VAD or windowing, so the recording is continuous and gap-free regardless of what the
+    /// transcriber decides to keep.
+    var onSamples: (@Sendable ([Float]) -> Void)?
 
     init(_ processor: any AudioProcessing) {
         self.processor = processor
@@ -65,6 +69,7 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
                     self.energy.append(min(1, rms * 14))   // rough 0…1 level for the meters
                     if self.energy.count > 16 { self.energy.removeFirst(self.energy.count - 16) }
                     self.lock.unlock()
+                    self.onSamples?(chunk)
                     // Keep WhisperKit's internal (unread) buffer from growing all session — safe here.
                     self.processor.purgeAudioSamples(keepingLast: Self.internalCap)
                 }

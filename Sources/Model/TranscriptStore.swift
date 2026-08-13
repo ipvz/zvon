@@ -48,6 +48,13 @@ final class TranscriptStore: ObservableObject {
     /// When the last final line landed — the clock the idle nudge runs off.
     @Published var lastTranscriptAt: Date?
 
+    // Audio archive. Off by default on purpose: this captures the other party's voice, which is not
+    // something to switch on for someone silently.
+    @Published var audioRecordingEnabled = false { didSet { UserDefaults.standard.set(audioRecordingEnabled, forKey: "audioRecordingEnabled") } }
+    /// Days to keep recordings; 0 keeps them forever. Audio dwarfs everything else on disk.
+    @Published var audioRetentionDays = 30 { didSet { UserDefaults.standard.set(audioRetentionDays, forKey: "audioRetentionDays") } }
+    var audioRecorder: MeetingAudioRecorder?
+
     // Live LLM notes
     @Published var notes = MeetingNotes()
     @Published var notesGenerating = false
@@ -175,6 +182,8 @@ final class TranscriptStore: ObservableObject {
         calendarEnabled = d.object(forKey: "calendarEnabled") == nil ? true : d.bool(forKey: "calendarEnabled")
         meetingPromptEnabled = d.object(forKey: "meetingPromptEnabled") == nil ? true : d.bool(forKey: "meetingPromptEnabled")
         meetingPromptSound = d.object(forKey: "meetingPromptSound") == nil ? true : d.bool(forKey: "meetingPromptSound")
+        audioRecordingEnabled = d.bool(forKey: "audioRecordingEnabled")     // opt-in
+        audioRetentionDays = d.object(forKey: "audioRetentionDays") == nil ? 30 : d.integer(forKey: "audioRetentionDays")
         idleStopEnabled = d.object(forKey: "idleStopEnabled") == nil ? true : d.bool(forKey: "idleStopEnabled")
         idleStopMinutes = d.object(forKey: "idleStopMinutes") == nil ? 3 : max(1, d.integer(forKey: "idleStopMinutes"))
 
@@ -1001,8 +1010,15 @@ final class TranscriptStore: ObservableObject {
             modelReady = true
             DebugLog.log("record streaming \(variant)")
             let captureSystem = !dictating && captureMode == .micAndSystem   // dictation is mic-only
+            // Meetings only: a dictation snippet is pasted and gone, there is nothing to replay.
+            // A resumed segment keeps the recorder opened by the first one so the file stays one
+            // continuous timeline.
+            if audioRecordingEnabled, !dictating, audioRecorder == nil, let started = recordingStartedAt {
+                audioRecorder = MeetingAudioRecorder(sessionId: currentSessionId, startedAt: started)
+            }
             try await pipeline.start(variant: variant, modelFolder: folder, language: lang, compute: compute,
-                                     captureSystem: captureSystem, dictation: dictating)
+                                     captureSystem: captureSystem, dictation: dictating,
+                                     recorder: dictating ? nil : audioRecorder)
         } catch {
             DebugLog.log("record failed: \(error.localizedDescription)")
             status = .error(error.localizedDescription)
@@ -1067,6 +1083,11 @@ final class TranscriptStore: ObservableObject {
         if isDictation {
             finishDictation()          // insert + archive dictation, clears dictating/isDictating
         } else {
+            // Close the audio BEFORE archiving: the archive row is what the UI checks for a
+            // playable file, and a half-written container is not one. A session with no lines
+            // isn't archived, so its audio would be orphaned — drop it instead.
+            if finals.isEmpty { audioRecorder?.discard() } else { audioRecorder?.finish() }
+            audioRecorder = nil
             archiveMeeting()
         }
         recordingStartedAt = nil

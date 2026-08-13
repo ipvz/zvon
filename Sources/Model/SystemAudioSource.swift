@@ -25,6 +25,9 @@ final class SystemAudioSource: LiveAudioSource, @unchecked Sendable {
     private var tapFormat: AVAudioFormat?
     private let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
     private let ioQueue = DispatchQueue(label: "com.parley.systemtap.io", qos: .userInitiated)
+    /// Optional tap for archiving the audio — the same 16 kHz mono the transcriber sees, taken
+    /// before any VAD windowing so the recording has no gaps.
+    var onSamples: (@Sendable ([Float]) -> Void)?
 
     func start() throws {
         // 1. Global system-output tap, excluding nothing (mono-mixed later).
@@ -143,6 +146,7 @@ final class SystemAudioSource: LiveAudioSource, @unchecked Sendable {
         guard convErr == nil, out.frameLength > 0, let ch = out.floatChannelData else { return }
         let samples = Array(UnsafeBufferPointer(start: ch[0], count: Int(out.frameLength)))
         lock.lock(); ring.append(contentsOf: samples); lock.unlock()
+        onSamples?(samples)
     }
 
     // MARK: - Core Audio helpers

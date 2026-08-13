@@ -699,19 +699,35 @@ struct MeetingView: View {
     }
 
     @ViewBuilder private var transcriptView: some View {
-        let blocks: [(String, String, Bool)] = {
-            if viewingPast, let s = selected {
-                return parseTranscript(s.transcript ?? s.title).map { ($0.0, $0.1, false) }
+        // A live session has no playable file yet — the container is still open — so only an
+        // archived one carries a session id for the player.
+        let past: SessionRecord? = viewingPast ? selected : nil
+        let blocks: [(String, String, Bool, String?, Double?)] = {
+            if let s = past {
+                return parseTranscript(s.transcript ?? s.title).map {
+                    ($0.speaker, $0.text, false, $0.clock, offsetSec($0.clock, start: s.date))
+                }
             }
-            return store.lines.map { ($0.speaker.title, $0.text, !$0.isFinal) }
+            let base = store.recordingStartedAt
+            return store.lines.map { line in
+                (line.speaker.title, line.text, !line.isFinal,
+                 base.map { TranscriptStore.turnClock.string(from: $0.addingTimeInterval(max(0, line.startSec))) },
+                 nil)
+            }
         }()
         if blocks.isEmpty {
             Text(store.isRecording ? L("Слушаю разговор…", "Listening…") : L("Транскрипт пуст.", "Transcript is empty."))
                 .font(.system(size: 13)).foregroundStyle(Color.pInk3)
         } else {
+            if let s = past, MeetingAudioRecorder.hasAudio(sessionId: s.id) {
+                AudioPlayerBar(sessionId: s.id).padding(.bottom, 6)
+            }
+            let offsets = blocks.map(\.4)
             LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, b in
-                    TranscriptBlock(speaker: b.0, text: b.1, partial: b.2)
+                ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
+                    TranscriptBlock(speaker: b.0, text: b.1, partial: b.2,
+                                    stamp: b.3, at: b.4,
+                                    until: Self.nextOffset(offsets, after: i), sessionId: past?.id)
                 }
             }
         }
@@ -1051,15 +1067,21 @@ struct MeetingView: View {
 
     private func meetingDetail(_ s: SessionRecord) -> some View {
         let blocks = parseTranscript(s.transcript ?? s.title)
+        let offsets = blocks.map { offsetSec($0.clock, start: s.date) }
         return VStack(alignment: .leading, spacing: 20) {
-            participantsRow(Set(blocks.map(\.0).filter { !$0.isEmpty }))
+            participantsRow(Set(blocks.map(\.speaker).filter { !$0.isEmpty }))
+            if MeetingAudioRecorder.hasAudio(sessionId: s.id) {
+                AudioPlayerBar(sessionId: s.id)
+            }
             let pastNotes = MeetingNotes(summary: s.noteSummary ?? [], decisions: s.noteDecisions ?? [],
                                          actions: [], topics: s.noteTopics ?? [])
             if !pastNotes.isEmpty { summaryCard(pastNotes) }   // full card: Итог + Решения + Темы
             meetingTasks(s.id)
             LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                    TranscriptBlock(speaker: block.0, text: block.1, partial: false)
+                ForEach(Array(blocks.enumerated()), id: \.offset) { i, block in
+                    TranscriptBlock(speaker: block.speaker, text: block.text, partial: false,
+                                    stamp: block.clock, at: offsets[i],
+                                    until: Self.nextOffset(offsets, after: i), sessionId: s.id)
                 }
             }
         }
@@ -1221,13 +1243,53 @@ struct MeetingView: View {
 
     // MARK: Helpers
 
-    private func parseTranscript(_ text: String) -> [(String, String)] {
-        text.split(separator: "\n").map { line in
-            if let colon = line.firstIndex(of: ":") {
-                return (String(line[..<colon]), String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces))
+    /// One archived line: "[14:32:05] Собеседник: …". The stamp is optional — recordings made
+    /// before turn times were persisted have none, and splitting on the first colon without
+    /// stripping it first would take the hour as the speaker.
+    struct ParsedLine {
+        let speaker: String
+        let text: String
+        let clock: String?
+    }
+
+    private func parseTranscript(_ text: String) -> [ParsedLine] {
+        text.split(separator: "\n").map { raw in
+            var line = Substring(raw)
+            var clock: String?
+            if line.hasPrefix("["), let close = line.firstIndex(of: "]") {
+                clock = String(line[line.index(after: line.startIndex)..<close])
+                line = line[line.index(after: close)...].drop(while: { $0 == " " })
             }
-            return ("", String(line))
+            if let colon = line.firstIndex(of: ":") {
+                return ParsedLine(speaker: String(line[..<colon]),
+                                  text: String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces),
+                                  clock: clock)
+            }
+            return ParsedLine(speaker: "", text: String(line), clock: clock)
         }
+    }
+
+    /// Where the next stamped line begins — the end of this one's "playing now" window.
+    static func nextOffset(_ offsets: [Double?], after i: Int) -> Double {
+        for j in (i + 1)..<offsets.count { if let o = offsets[j] { return o } }
+        return .infinity
+    }
+
+    private static let clockParser: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
+    /// Seconds from the start of the recording, derived from the line's wall-clock stamp. The audio
+    /// file shares that origin, so this is what the player seeks to.
+    private func offsetSec(_ clock: String?, start: Date) -> Double? {
+        guard let clock, let parsed = Self.clockParser.date(from: clock) else { return nil }
+        let cal = Calendar.current
+        let c = cal.dateComponents([.hour, .minute, .second], from: parsed)
+        guard let stamped = cal.date(bySettingHour: c.hour ?? 0, minute: c.minute ?? 0,
+                                     second: c.second ?? 0, of: start) else { return nil }
+        var delta = stamped.timeIntervalSince(start)
+        if delta < -3600 { delta += 86_400 }        // meeting ran across midnight
+        return max(0, delta)
     }
 
     // MARK: - Export / share
@@ -1350,21 +1412,135 @@ struct WindowConfigurator: NSViewRepresentable {
 }
 
 /// One transcript block — speaker name over the line (a readable record, not a chat bubble).
+/// Transport for an archived meeting's audio. Deliberately one row: the transcript is the thing
+/// being read, and the player is how you check a moment in it — not a media app.
+struct AudioPlayerBar: View {
+    let sessionId: UUID
+    @ObservedObject private var audio = MeetingAudioPlayer.shared
+    @ObservedObject private var loc = L11n.shared
+    @State private var dragFraction: Double?
+
+    private var isMine: Bool { audio.sessionId == sessionId }
+    private var position: Double { dragFraction.map { $0 * audio.duration } ?? (isMine ? audio.position : 0) }
+    private var duration: Double { isMine ? audio.duration : 0 }
+
+    private func clock(_ t: Double) -> String {
+        let s = Int(t.rounded(.down))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s % 3600) / 60, s % 60)
+                         : String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                if isMine { audio.toggle() } else { audio.play(sessionId: sessionId, at: 0) }
+            } label: {
+                Image(systemName: isMine && audio.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 11, weight: .bold)).foregroundStyle(Color.pOnAccent)
+                    .frame(width: 28, height: 28).background(Circle().fill(Color.pAccent))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isMine && audio.isPlaying ? L("Пауза", "Pause") : L("Воспроизвести", "Play"))
+
+            GeometryReader { geo in
+                let frac = duration > 0 ? min(1, max(0, position / duration)) : 0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.pLine).frame(height: 4)
+                    Capsule().fill(Color.pAccent).frame(width: geo.size.width * frac, height: 4)
+                    Circle().fill(Color.pAccent).frame(width: 10, height: 10)
+                        .offset(x: geo.size.width * frac - 5)
+                }
+                .frame(height: 28)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { v in
+                            guard duration > 0 else { return }
+                            if dragFraction == nil { audio.beginScrub() }
+                            dragFraction = min(1, max(0, v.location.x / max(1, geo.size.width)))
+                        }
+                        .onEnded { _ in
+                            guard let f = dragFraction else { return }
+                            audio.endScrub(to: f * audio.duration)
+                            dragFraction = nil
+                        }
+                )
+            }
+            .frame(height: 28)
+
+            Text("\(clock(position)) / \(clock(duration))")
+                .font(PFont.monoSecondary).foregroundStyle(Color.pInk3)
+                .monospacedDigit().fixedSize()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pLine, lineWidth: 1))
+        .onAppear { _ = audio.load(sessionId: sessionId) }
+    }
+}
+
 struct TranscriptBlock: View {
     let speaker: String
     let text: String
     let partial: Bool
+    var stamp: String? = nil          // wall-clock label, e.g. "14:32:05"
+    var at: Double? = nil             // offset into the recording
+    var until: Double = .infinity     // where the next line starts — bounds the "playing now" highlight
+    var sessionId: UUID? = nil        // set only when an archived track exists
+
+    @ObservedObject private var audio = MeetingAudioPlayer.shared
+    @State private var hovering = false
+
+    private var playable: Bool { sessionId != nil && at != nil }
+    private var isActive: Bool {
+        guard playable, let at, audio.sessionId == sessionId, audio.isLoaded else { return false }
+        return audio.position + 0.35 >= at && audio.position < until
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !speaker.isEmpty {
-                Text(speaker).font(PFont.secondaryStrong).foregroundStyle(Color.pInk2)
+        HStack(alignment: .top, spacing: 10) {
+            // The accent rule marks the line being played. It occupies its own column always, so
+            // text never shifts when playback moves between lines.
+            RoundedRectangle(cornerRadius: 1)
+                .fill(isActive ? Color.pAccent : Color.clear)
+                .frame(width: 2)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    if !speaker.isEmpty {
+                        Text(speaker).font(PFont.secondaryStrong).foregroundStyle(isActive ? Color.pAccent : Color.pInk2)
+                    }
+                    if let stamp {
+                        HStack(spacing: 4) {
+                            if playable, hovering || isActive {
+                                Image(systemName: isActive && audio.isPlaying ? "waveform" : "play.fill")
+                                    .font(.system(size: 8.5))
+                            }
+                            Text(stamp).font(PFont.monoSecondary)
+                        }
+                        .foregroundStyle(isActive ? Color.pAccent : (hovering && playable ? Color.pInk2 : Color.pInk3))
+                    }
+                    Spacer(minLength: 0)
+                }
+                (Text(text).foregroundColor(Color.pInk1) + Text(partial ? " …" : "").foregroundColor(Color.pInk3))
+                    .font(PFont.body).lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
             }
-            (Text(text).foregroundColor(Color.pInk1) + Text(partial ? " …" : "").foregroundColor(Color.pInk3))
-                .font(PFont.body).lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
         }
+        .padding(.vertical, 6).padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8)
+            .fill(isActive ? Color.pAccentWash : (hovering && playable ? Color.pSelection : Color.clear)))
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { hovering = $0 }
+        // Text stays selectable, so the tap lives on the block rather than on a Button wrapping it.
+        .onTapGesture {
+            guard let id = sessionId, let at else { return }
+            MeetingAudioPlayer.shared.play(sessionId: id, at: at)
+        }
+        .help(playable ? L("Прослушать с этого момента", "Play from here") : "")
+        .animation(.easeOut(duration: 0.15), value: isActive)
     }
 }
 
