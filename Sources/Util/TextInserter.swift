@@ -11,7 +11,22 @@ enum TextInserter {
     // flight means a dictation is mid-cycle: a second rapid dictation must NOT re-snapshot (it would
     // capture the first one's concealed text and lose the user's original) — it reuses this baseline.
     private static var savedOriginal: [NSPasteboardItem]?
+    private static var pendingPaste: DispatchWorkItem?
     private static var pendingRestore: DispatchWorkItem?
+    /// `changeCount` of the pasteboard right after WE wrote to it. Anything else means someone
+    /// (the user, a clipboard manager) has written since, and our bookkeeping is stale.
+    private static var ourChangeCount = -1
+
+    /// How long our text stays on the pasteboard before the user's clipboard goes back.
+    ///
+    /// ⌘V is delivered asynchronously: the target app reads the pasteboard whenever it gets around
+    /// to processing the key event. Restore too early and the app reads the RESTORED clipboard —
+    /// the dictation silently inserts whatever the user had copied before. That was this code at
+    /// 0.25s, and it lost the race on any loaded machine or heavy Electron target. A second and a
+    /// half costs nothing (the clipboard is merely occupied) and clears the window with room spare.
+    private static let restoreDelay: TimeInterval = 1.5
+    /// Let the pasteboard write settle and the trigger key finish releasing before ⌘V goes out.
+    private static let pasteDelay: TimeInterval = 0.05
 
     @discardableResult
     static func insert(_ text: String) -> Bool {
@@ -21,30 +36,51 @@ enum TextInserter {
         // No editable field (or no Accessibility to check) → leave the text on the clipboard for the
         // "no input field" card to show/re-copy, and report false so the caller shows it.
         guard canAutoPaste, hasEditableFocus() else {
-            writeConcealed(trimmed)
+            ourChangeCount = writeConcealed(trimmed)
             return false
         }
         // Editable field → paste at the caret WITHOUT clobbering the user's clipboard: snapshot it,
         // put our text, ⌘V, then restore the snapshot. (Same as Wispr Flow — clipboard stays intact.)
-        pendingRestore?.cancel()                         // supersede a still-pending restore
+        pendingPaste?.cancel()                           // a newer dictation supersedes an unsent ⌘V
+        pendingRestore?.cancel()                         // …and its pending restore
         if savedOriginal == nil { savedOriginal = snapshot() }   // capture the user's clipboard only once per cycle
-        writeConcealed(trimmed)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            paste()
-            let work = DispatchWorkItem {
-                restore(savedOriginal ?? [])
-                savedOriginal = nil
-                pendingRestore = nil
+        ourChangeCount = writeConcealed(trimmed)
+
+        let pasteWork = DispatchWorkItem {
+            pendingPaste = nil
+            // Between the write and now, a clipboard manager may have rewritten the pasteboard.
+            // Paste what the user dictated, not what a background app decided to put there.
+            if NSPasteboard.general.changeCount != ourChangeCount {
+                DebugLog.log("insert: pasteboard changed before ⌘V — rewriting dictated text")
+                ourChangeCount = writeConcealed(trimmed)
             }
-            pendingRestore = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
+            paste()
+            scheduleRestore()
         }
+        pendingPaste = pasteWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay, execute: pasteWork)
         return true
+    }
+
+    private static func scheduleRestore() {
+        let work = DispatchWorkItem {
+            defer { savedOriginal = nil; pendingRestore = nil }
+            // Something wrote after us, so the pasteboard now holds content NEWER than our snapshot.
+            // Restoring would throw the user's fresh copy away; leave it alone.
+            guard NSPasteboard.general.changeCount == ourChangeCount else {
+                DebugLog.log("insert: clipboard changed after paste — keeping it, no restore")
+                return
+            }
+            restore(savedOriginal ?? [])
+        }
+        pendingRestore = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: work)
     }
 
     /// Dictated text can be private (passwords, notes) — mark it concealed/transient so clipboard
     /// managers and Universal Clipboard don't archive or sync it across devices.
-    private static func writeConcealed(_ text: String) {
+    @discardableResult
+    private static func writeConcealed(_ text: String) -> Int {
         let pb = NSPasteboard.general
         pb.clearContents()
         let item = NSPasteboardItem()
@@ -52,6 +88,7 @@ enum TextInserter {
         item.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
         item.setString("", forType: NSPasteboard.PasteboardType("org.nspasteboard.TransientType"))
         pb.writeObjects([item])
+        return pb.changeCount
     }
 
     private static func snapshot() -> [NSPasteboardItem] {
@@ -98,7 +135,10 @@ enum TextInserter {
     }
 
     private static func paste() {
-        let src = CGEventSource(stateID: .combinedSessionState)
+        // `.privateState`, not `.combinedSessionState`: the latter merges the REAL keyboard state
+        // into synthetic events, so a trigger modifier still physically held turns our ⌘V into
+        // ⌥⌘V / ⇧⌘V — a different command in many apps.
+        let src = CGEventSource(stateID: .privateState)
         let vKey: CGKeyCode = 0x09   // "V"
         let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true)
         down?.flags = .maskCommand
