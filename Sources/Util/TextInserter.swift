@@ -105,27 +105,88 @@ enum TextInserter {
         if !items.isEmpty { pb.writeObjects(items) }
     }
 
-    /// True if the system-wide focused UI element is an editable text control.
+    private static let editableRoles: Set<String> = [
+        kAXTextFieldRole as String, kAXTextAreaRole as String, kAXComboBoxRole as String,
+        "AXSearchField",
+    ]
+
+    /// True if the focused UI element is somewhere a caret can live.
+    ///
+    /// Deliberately generous. A false negative breaks dictation for the user every single time —
+    /// the caret is blinking in a real field and we refuse to paste — while a false positive costs
+    /// at most a ⌘V that the frontmost app ignores. The old test asked only for three AX roles or a
+    /// settable value, which misses most of the places people actually type: Electron and Chromium
+    /// surfaces (Slack, VS Code, Notion, every web input) expose a generic group, or expose nothing
+    /// at all until accessibility is switched on for them explicitly.
     static func hasEditableFocus() -> Bool {
         guard AXIsProcessTrusted() else { return false }
-        let system = AXUIElementCreateSystemWide()
-        var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let focusedRef = focused, CFGetTypeID(focusedRef) == AXUIElementGetTypeID() else { return false }
-        let element = focusedRef as! AXUIElement
-
-        var roleRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleRef)
-        if let role = roleRef as? String,
-           role == (kAXTextFieldRole as String) || role == (kAXTextAreaRole as String) || role == (kAXComboBoxRole as String) {
-            return true
+        guard let element = focusedElement() else {
+            DebugLog.log("insert: no focused AX element")
+            return false
         }
-        // Fallback: any element whose value is settable behaves like an editable field (web inputs).
+        if isEditable(element) { return true }
+        // contenteditable and rich composers report the caret on an ancestor, not on the focused node.
+        var current = element
+        for _ in 0..<4 {
+            guard let parent = attribute(current, kAXParentAttribute as String) else { break }
+            if isEditable(parent) { return true }
+            current = parent
+        }
+        DebugLog.log("insert: focus not editable (role=\(role(of: element) ?? "nil"))")
+        return false
+    }
+
+    /// The focused element, asking the frontmost app directly when the system-wide query comes up
+    /// empty — and switching on accessibility for Chromium/Electron hosts, which ship their tree
+    /// hidden until an assistive client asks for it.
+    private static func focusedElement() -> AXUIElement? {
+        if let e = attribute(AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as String) { return e }
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        if let e = attribute(app, kAXFocusedUIElementAttribute as String) { return e }
+        // Last resort: the focused window's own focused element.
+        guard let window = attribute(app, kAXFocusedWindowAttribute as String) else { return nil }
+        return attribute(window, kAXFocusedUIElementAttribute as String)
+    }
+
+    private static func isEditable(_ element: AXUIElement) -> Bool {
+        let r = role(of: element)
+        if let r, editableRoles.contains(r) { return true }
+
+        // A selection range or an insertion-point line means a caret genuinely lives here. Checked
+        // BEFORE any role exclusion: this is the stronger signal, and web inputs and custom editors
+        // expose it while reporting themselves as plain groups.
+        for attr in [kAXSelectedTextRangeAttribute as String, "AXInsertionPointLineNumber"] {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, attr as CFString, &value) == .success, value != nil { return true }
+        }
+
+        // A settable value alone is weak evidence — sliders and checkboxes have one too — so it does
+        // not count for things a caret plainly cannot sit in.
+        if let r, r == (kAXStaticTextRole as String) || r == (kAXButtonRole as String)
+            || r == (kAXImageRole as String) || r == (kAXCheckBoxRole as String)
+            || r == (kAXSliderRole as String) || r == (kAXMenuItemRole as String) {
+            return false
+        }
         var settable: DarwinBoolean = false
         if AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue {
             return true
         }
         return false
+    }
+
+    private static func role(of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
+
+    private static func attribute(_ element: AXUIElement, _ name: String) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
+              let v = value, CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
     }
 
     /// Ask for Accessibility once (shows the system prompt if not yet decided).
