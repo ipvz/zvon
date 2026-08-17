@@ -73,6 +73,14 @@ final class SystemAudioSource: LiveAudioSource, @unchecked Sendable {
         // 3. Tap stream format (usually Float32 stereo @ device rate).
         if var asbd = Self.tapStreamFormat(tapID) {
             tapFormat = AVAudioFormat(streamDescription: &asbd)
+            // Logged because a wrong channel count here is invisible and expensive: the buffer is
+            // wrapped with `bufferListNoCopy`, so frameLength is derived from bytes ÷ bytesPerFrame.
+            // Claim mono over interleaved stereo data and every chunk reports twice its real length.
+            if let f = tapFormat {
+                DebugLog.log("system tap format: \(Int(f.sampleRate)) Hz, \(f.channelCount) ch, "
+                             + "interleaved=\(!f.isStandard || asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0), "
+                             + "bytesPerFrame=\(asbd.mBytesPerFrame)")
+            }
         }
 
         // 4. IOProc → convert → ring.

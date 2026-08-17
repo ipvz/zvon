@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import WhisperKit
 
@@ -50,7 +51,39 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
         self.processor = processor
     }
 
+    /// Retried, because the common failure here is TRANSIENT and the old behaviour left dictation
+    /// dead until the app was relaunched. Ending a meeting destroys the aggregate device the system
+    /// tap was built on; while CoreAudio settles, the default input can briefly report an invalid
+    /// format and AVAudioEngine answers "Failed to create node format". A device arriving or leaving
+    /// (Continuity mic, headset, virtual device) does the same. One attempt lost the whole feature
+    /// to a window a few hundred milliseconds wide.
     func start() throws {
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                try startOnce()
+                if attempt > 1 { DebugLog.log("mic start recovered on attempt \(attempt)") }
+                return
+            } catch {
+                lastError = error
+                DebugLog.log("mic start attempt \(attempt) failed: \(error.localizedDescription) — \(Self.inputDescription())")
+                stop()                                   // drop any half-installed tap before retrying
+                if attempt < 3 { Thread.sleep(forTimeInterval: 0.4) }
+            }
+        }
+        throw lastError ?? NSError(domain: "ZVON", code: -1,
+                                   userInfo: [NSLocalizedDescriptionKey: "Микрофон недоступен"])
+    }
+
+    /// The input as CoreAudio sees it right now. Logged on failure — "Failed to create node format"
+    /// on its own never said WHICH device was wrong or what it claimed to be.
+    private static func inputDescription() -> String {
+        let engine = AVAudioEngine()
+        let f = engine.inputNode.inputFormat(forBus: 0)
+        return "input \(Int(f.sampleRate)) Hz \(f.channelCount) ch"
+    }
+
+    private func startOnce() throws {
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
         // AVFAudio's installTapOnBus (inside startRecordingLive) raises an ObjC NSException when the mic
         // input is unavailable / the device changed / a tap is still attached from a too-fast restart.

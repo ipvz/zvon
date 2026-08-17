@@ -107,7 +107,7 @@ actor UtteranceTranscriber {
             let speech = rms > threshold
             vadTick += 1
             if vadTick % 6 == 0 {
-                DebugLog.log("vad dt=\(String(format: "%.2f", dt)) rms=\(String(format: "%.4f", rms)) thr=\(String(format: "%.4f", threshold)) speech=\(speech) sil=\(String(format: "%.2f", silenceRun))")
+                DebugLog.trace("vad dt=\(String(format: "%.2f", dt)) rms=\(String(format: "%.4f", rms)) thr=\(String(format: "%.4f", threshold)) speech=\(speech) sil=\(String(format: "%.2f", silenceRun))")
             }
 
             if speech {

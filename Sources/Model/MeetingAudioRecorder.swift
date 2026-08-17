@@ -33,6 +33,8 @@ final class MeetingAudioRecorder: @unchecked Sendable {
     private var timer: DispatchSourceTimer?
     private var closed = false
     private var sawAudio = false
+    private var trimmed: [Speaker: Int] = [:]
+    private var lastTrimReport = Date.distantPast
 
     init(sessionId: UUID, startedAt: Date) {
         self.sessionId = sessionId
@@ -133,7 +135,20 @@ final class MeetingAudioRecorder: @unchecked Sendable {
             let surplus = (pending[speaker]?.count ?? 0) - needed - Self.maxBacklog
             if surplus > 0 {
                 pending[speaker]?.removeFirst(surplus)
-                DebugLog.log("audio: trimmed \(surplus) backlog frames on \(speaker.rawValue)")
+                trimmed[speaker, default: 0] += surplus
+                // Summarised, not logged per flush: a steadily over-producing source would otherwise
+                // write four lines a second for the whole meeting. A persistent surplus means that
+                // side is delivering faster than real time — worth seeing, worth seeing once.
+                let now = Date()
+                if now.timeIntervalSince(lastTrimReport) >= 10 {
+                    lastTrimReport = now
+                    for (s, n) in trimmed where n > 0 {
+                        let rate = Double(n) / 10 / Self.sampleRate
+                        DebugLog.log(String(format: "audio: %@ over-producing by %.2f× real time (%d frames dropped in 10s)",
+                                            s.rawValue, 1 + rate, n))
+                    }
+                    trimmed.removeAll()
+                }
             }
         }
 
