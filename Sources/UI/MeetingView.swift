@@ -27,6 +27,18 @@ struct MeetingView: View {
     @State private var pastNotesDraft = ""            // editable copy of a past record's «Мои заметки»
     @State private var pastNotesFor: UUID?            // which record pastNotesDraft belongs to
     @State private var detailAsk = ""
+    @State private var transcriptCopied = false
+    @State private var transcriptFind = ""            // plain text find inside the open transcript
+    @State private var findFocused = false
+    @State private var findIndex = 0
+    @State private var findScrollTarget: Int?
+    // The live transcript follows new lines only while the reader is parked at the bottom.
+    @State private var detailAtBottom = true
+    @State private var mainAtBottom = true
+    @State private var detailViewportBottom: CGFloat = 0
+    @State private var mainViewportBottom: CGFloat = 0
+    @State private var detailSentinel: CGFloat = .greatestFiniteMagnitude
+    @State private var mainSentinel: CGFloat = .greatestFiniteMagnitude
     @FocusState private var searchFocused: Bool
     @FocusState private var detailAskFocused: Bool
     @Environment(\.colorScheme) private var colorScheme
@@ -546,14 +558,59 @@ struct MeetingView: View {
                     case .notes:      notesEditorView
                     case .transcript: transcriptView
                     }
-                    Color.clear.frame(height: 1).id("bottom")
+                    Color.clear.frame(height: 1).id("bottom").trackBottom(BottomEdgeKey.self)
                 }
                 .padding(.horizontal, 30).padding(.top, 26).padding(.bottom, 20)
             }
+            .trackViewportBottom(ViewportBottomKey.self)
+            // Both values arrive on their own schedule, so the verdict is recomputed from whichever
+            // lands — deciding only inside the sentinel handler leaves the flag false on first
+            // layout, when the viewport height is still zero, and kills the initial follow.
+            .onPreferenceChange(BottomEdgeKey.self) { detailSentinel = $0; detailAtBottom = Self.atBottom(detailSentinel, detailViewportBottom) }
+            .onPreferenceChange(ViewportBottomKey.self) { detailViewportBottom = $0; detailAtBottom = Self.atBottom(detailSentinel, detailViewportBottom) }
+            .onChange(of: findScrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("tline-\(target)", anchor: .center) }
+            }
             .onChange(of: store.lines.count) { _, _ in
-                if detailTab == .transcript { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+                // Follow the conversation ONLY when the reader is already at the bottom. Scrolling
+                // down unconditionally meant every new utterance yanked the view back while you
+                // were reading something further up — which made reading during a meeting impossible.
+                guard detailTab == .transcript, detailAtBottom else { return }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .overlay(alignment: .bottom) {
+                if detailTab == .transcript, !detailAtBottom, store.isRecording {
+                    jumpToLatest { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+                }
             }
         }
+    }
+
+    /// How close to the bottom still counts as "parked at the bottom".
+    private static let followSlack: CGFloat = 60
+
+    /// Until the viewport has been measured, assume we are at the bottom: a fresh view starts there,
+    /// and guessing "not at the bottom" would suppress the very first follow.
+    private static func atBottom(_ sentinel: CGFloat, _ viewportBottom: CGFloat) -> Bool {
+        guard viewportBottom > 0, sentinel < .greatestFiniteMagnitude else { return true }
+        return sentinel - viewportBottom <= followSlack
+    }
+
+    private func jumpToLatest(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down").font(.system(size: 10, weight: .bold))
+                Text(L("К последней реплике", "Jump to latest")).font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(Color.pOnAccent)
+            .padding(.horizontal, 12).frame(height: 30)
+            .background(Capsule().fill(Color.pAccent))
+            .shadow(color: .pShadow2, radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, 14)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 
     private var itogView: some View {
@@ -719,6 +776,8 @@ struct MeetingView: View {
             Text(store.isRecording ? L("Слушаю разговор…", "Listening…") : L("Транскрипт пуст.", "Transcript is empty."))
                 .font(.system(size: 13)).foregroundStyle(Color.pInk3)
         } else {
+            let matches = Self.matchingBlocks(blocks.map(\.1), query: transcriptFind)
+            transcriptFindBar(total: matches.count)
             // Only a session with a track on disk is playable — a stamp on its own must not offer a
             // play affordance that does nothing.
             let audioId: UUID? = past.flatMap { MeetingAudioRecorder.hasAudio(sessionId: $0.id) ? $0.id : nil }
@@ -728,9 +787,71 @@ struct MeetingView: View {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { i, b in
                     TranscriptBlock(speaker: b.0, text: b.1, partial: b.2,
                                     stamp: b.3, at: b.4,
-                                    until: Self.nextOffset(offsets, after: i), sessionId: audioId)
+                                    until: Self.nextOffset(offsets, after: i), sessionId: audioId,
+                                    highlight: transcriptFind,
+                                    isCurrentMatch: matches.indices.contains(findIndex) && matches[findIndex] == i)
+                        .id("tline-\(i)")
                 }
             }
+            .onChange(of: transcriptFind) { _, _ in
+                findIndex = 0
+                findScrollTarget = matches.first
+            }
+        }
+    }
+
+    /// Plain literal find inside the open transcript. Distinct from the footer, which asks a model
+    /// a question — this one just finds the words that are actually there, which is what you want
+    /// when you remember a phrase and need the moment it was said.
+    @ViewBuilder private func transcriptFindBar(total: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Color.pInk3)
+            TextField(L("Найти в расшифровке", "Find in transcript"), text: $transcriptFind)
+                .textFieldStyle(.plain).font(.system(size: 12.5)).foregroundStyle(Color.pInk1)
+            if !transcriptFind.isEmpty {
+                Text(total == 0 ? L("нет совпадений", "no matches") : "\(min(findIndex + 1, total)) / \(total)")
+                    .font(PFont.monoSecondary).foregroundStyle(Color.pInk3).fixedSize()
+                Button { stepMatch(-1, total: total) } label: {
+                    Image(systemName: "chevron.up").font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain).disabled(total == 0)
+                .accessibilityLabel(L("Предыдущее совпадение", "Previous match"))
+                Button { stepMatch(1, total: total) } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 10, weight: .semibold))
+                }
+                .buttonStyle(.plain).disabled(total == 0)
+                .accessibilityLabel(L("Следующее совпадение", "Next match"))
+                Button { transcriptFind = "" } label: {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                }
+                .buttonStyle(.plain).accessibilityLabel(L("Очистить поиск", "Clear search"))
+            }
+        }
+        .foregroundStyle(Color.pInk3)
+        .padding(.horizontal, 10).frame(height: 30)
+        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine, lineWidth: 1))
+        .padding(.bottom, 4)
+    }
+
+    private func stepMatch(_ delta: Int, total: Int) {
+        guard total > 0 else { return }
+        findIndex = (findIndex + delta + total) % total          // wraps, like every find bar
+        let hits = Self.matchingBlocks(currentTranscriptTexts(), query: transcriptFind)
+        findScrollTarget = hits.indices.contains(findIndex) ? hits[findIndex] : nil
+    }
+
+    private func currentTranscriptTexts() -> [String] {
+        if viewingPast, let s = selected { return parseTranscript(s.transcript ?? s.title).map(\.text) }
+        return store.lines.map(\.text)
+    }
+
+    /// Indices of the lines containing the query, case- and diacritic-insensitive.
+    static func matchingBlocks(_ texts: [String], query: String) -> [Int] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard q.count >= 1 else { return [] }
+        return texts.enumerated().compactMap { i, t in
+            t.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil ? i : nil
         }
     }
 
@@ -743,7 +864,11 @@ struct MeetingView: View {
                     .onSubmit {
                         let q = detailAsk.trimmingCharacters(in: .whitespaces)
                         guard !q.isEmpty else { return }
-                        store.isRecording ? store.ask(q) : store.askArchive(q)
+                        // Scoped to the meeting on screen — the field says "по этой встрече".
+                        // Only the sidebar field may range over the whole archive.
+                        if store.isRecording { store.ask(q) }
+                        else if let s = selected { store.askMeeting(q, session: s) }
+                        else { store.askArchive(q) }
                         detailAsk = ""
                     }
                 Text("⏎").font(PFont.mono).foregroundStyle(Color.pInk3)
@@ -925,14 +1050,25 @@ struct MeetingView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         if viewingPast { pastBody }
                         else { liveBody }
-                        Color.clear.frame(height: 1).id("bottom")
+                        Color.clear.frame(height: 1).id("bottom").trackBottom(BottomEdgeKey.self)
                     }
                     .frame(maxWidth: PMetric.notesMeasure, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 40).padding(.top, 28).padding(.bottom, 20)
             }
-            .onChange(of: store.lines.count) { _, _ in withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+            .trackViewportBottom(ViewportBottomKey.self)
+            .onPreferenceChange(BottomEdgeKey.self) { mainSentinel = $0; mainAtBottom = Self.atBottom(mainSentinel, mainViewportBottom) }
+            .onPreferenceChange(ViewportBottomKey.self) { mainViewportBottom = $0; mainAtBottom = Self.atBottom(mainSentinel, mainViewportBottom) }
+            .onChange(of: store.lines.count) { _, _ in
+                guard mainAtBottom else { return }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo("bottom", anchor: .bottom) }
+            }
+            .overlay(alignment: .bottom) {
+                if !mainAtBottom, store.isRecording {
+                    jumpToLatest { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) } }
+                }
+            }
             .background(Color.pCanvas)
         }
     }
@@ -1300,6 +1436,10 @@ struct MeetingView: View {
         VStack(alignment: .leading, spacing: 2) {
             ShareMenuRow(title: shareCopied ? L("Скопировано ✓", "Copied ✓") : L("Копировать текст", "Copy text"),
                          icon: shareCopied ? "checkmark" : "doc.on.doc", tint: shareCopied) { copyShare() }
+            ShareMenuRow(title: transcriptCopied ? L("Расшифровка скопирована ✓", "Transcript copied ✓")
+                                                 : L("Копировать расшифровку", "Copy transcript"),
+                         icon: transcriptCopied ? "checkmark" : "doc.on.clipboard", tint: transcriptCopied) { copyTranscript() }
+            ShareMenuRow(title: L("Сохранить расшифровку…", "Save transcript…"), icon: "doc.plaintext") { saveTranscript() }
             ShareMenuRow(title: L("Сохранить PDF…", "Save PDF…"), icon: "arrow.down.doc") { savePDF() }
             ShareMenuRow(title: L("Поделиться…", "Share…"), icon: "square.and.arrow.up") { systemShare() }
         }
@@ -1348,6 +1488,38 @@ struct MeetingView: View {
         let pb = NSPasteboard.general; pb.clearContents(); pb.setString(currentExport().shareText(), forType: .string)
         shareCopied = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { shareCopied = false; showShare = false }
+    }
+
+    /// The transcript exactly as captured — stamps, speaker, text, nothing summarised or reflowed.
+    /// This is what people want when they intend to process it somewhere else.
+    private func rawTranscript() -> String {
+        if viewingPast, let s = selected { return s.transcript ?? s.title }
+        let base = store.recordingStartedAt
+        return store.lines.filter(\.isFinal).map { line in
+            let stamp = base.map { "[\(TranscriptStore.turnClock.string(from: $0.addingTimeInterval(max(0, line.startSec))))] " } ?? ""
+            return stamp + "\(line.speaker.title): \(line.text)"
+        }.joined(separator: "\n")
+    }
+
+    private func copyTranscript() {
+        let text = rawTranscript()
+        guard !text.isEmpty else { return }
+        let pb = NSPasteboard.general; pb.clearContents(); pb.setString(text, forType: .string)
+        transcriptCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) { transcriptCopied = false; showShare = false }
+    }
+
+    private func saveTranscript() {
+        let text = rawTranscript()
+        showShare = false
+        guard !text.isEmpty else { return }
+        let name = (viewingPast ? selected?.title : store.meetingTitle) ?? L("Встреча", "Meeting")
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(name).txt"
+        panel.allowedContentTypes = [.plainText]
+        if panel.runModal() == .OK, let url = panel.url {
+            try? Data(text.utf8).write(to: url)
+        }
     }
 
     private func savePDF() {
@@ -1489,9 +1661,27 @@ struct TranscriptBlock: View {
     var at: Double? = nil             // offset into the recording
     var until: Double = .infinity     // where the next line starts — bounds the "playing now" highlight
     var sessionId: UUID? = nil        // set only when an archived track exists
+    var highlight: String = ""        // literal find query, marked inside the text
+    var isCurrentMatch: Bool = false
 
     @ObservedObject private var audio = MeetingAudioPlayer.shared
     @State private var hovering = false
+
+    /// Marks every occurrence of the query. Built as AttributedString rather than by slicing Text,
+    /// so a match spanning punctuation or repeated in one line still renders as one run of prose.
+    static func marked(_ text: String, query: String, current: Bool) -> AttributedString {
+        var out = AttributedString(text)
+        out.foregroundColor = .pInk1
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return out }
+        var search = out.startIndex..<out.endIndex
+        while let r = out[search].range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) {
+            out[r].backgroundColor = current ? Color.pAccent.opacity(0.45) : Color.pAccent.opacity(0.18)
+            guard r.upperBound < out.endIndex else { break }
+            search = r.upperBound..<out.endIndex
+        }
+        return out
+    }
 
     private var playable: Bool { sessionId != nil && at != nil }
     private var isActive: Bool {
@@ -1524,7 +1714,7 @@ struct TranscriptBlock: View {
                     }
                     Spacer(minLength: 0)
                 }
-                (Text(text).foregroundColor(Color.pInk1) + Text(partial ? " …" : "").foregroundColor(Color.pInk3))
+                (Text(Self.marked(text, query: highlight, current: isCurrentMatch)) + Text(partial ? " …" : "").foregroundColor(Color.pInk3))
                     .font(PFont.body).lineSpacing(5)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -1600,4 +1790,39 @@ struct AnyButtonStyle: ButtonStyle {
     private let _make: (Configuration) -> AnyView
     init<S: ButtonStyle>(_ style: S) { _make = { AnyView(style.makeBody(configuration: $0)) } }
     func makeBody(configuration: Configuration) -> some View { _make(configuration) }
+}
+
+// MARK: - Bottom-of-scroll tracking
+
+/// Global-space Y of the content's bottom sentinel.
+struct BottomEdgeKey: PreferenceKey {
+    static let defaultValue: CGFloat = .greatestFiniteMagnitude
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = min(value, nextValue()) }
+}
+
+/// Global-space Y of the scroll view's own bottom edge.
+struct ViewportBottomKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+extension View {
+    /// Report this view's top edge in global space. Put on the sentinel at the end of the content:
+    /// compared against the viewport's bottom edge it says whether the reader is parked at the end.
+    /// Measured with an overlay so the tracking cannot change layout.
+    func trackBottom<K: PreferenceKey>(_ key: K.Type) -> some View where K.Value == CGFloat {
+        overlay(
+            GeometryReader { g in
+                Color.clear.preference(key: key, value: g.frame(in: .global).minY)
+            }
+        )
+    }
+
+    func trackViewportBottom<K: PreferenceKey>(_ key: K.Type) -> some View where K.Value == CGFloat {
+        overlay(
+            GeometryReader { g in
+                Color.clear.preference(key: key, value: g.frame(in: .global).maxY)
+            }
+        )
+    }
 }

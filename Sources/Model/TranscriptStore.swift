@@ -718,6 +718,45 @@ final class TranscriptStore: ObservableObject {
             }
         }
     }
+    /// Ask about ONE meeting. The detail footer says "по этой встрече" and used to call
+    /// `askArchive`, which ranks the whole history and answers from the eight best-scoring
+    /// meetings — so a question about the meeting on screen could be answered from a different
+    /// one entirely. Scoped here to the record the user is actually looking at.
+    func askMeeting(_ question: String, session: SessionRecord) {
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        askQuestion = q; askAnswer = nil; askError = nil
+        askSources = [session]                       // one source, and it is the open meeting
+
+        let transcript = session.transcript ?? ""
+        let notes = ((session.noteSummary ?? []) + (session.noteDecisions ?? [])).map { "• \($0)" }.joined(separator: "\n")
+        let material = [notes.isEmpty ? nil : "ИТОГИ:\n" + notes,
+                        transcript.isEmpty ? nil : "РАСШИФРОВКА:\n" + transcript]
+            .compactMap { $0 }.joined(separator: "\n\n")
+        guard !material.isEmpty else {
+            askError = "У этой встречи нет расшифровки — спрашивать не по чему."
+            return
+        }
+
+        asking = true
+        let cfg = llmConfig()
+        askTask?.cancel()
+        askTask = Task { [weak self] in
+            do {
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                                                     glossary: GlossaryStore.shared.promptFragment)
+                    .ask(question: q, transcript: material)
+                guard !Task.isCancelled, let self else { return }
+                self.askAnswer = answer.isEmpty ? "Пустой ответ модели." : answer
+                self.asking = false
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                self.askError = (error as? LLMError)?.errorDescription ?? error.localizedDescription
+                self.asking = false
+            }
+        }
+    }
+
     private static let archiveDate: DateFormatter = {
         let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMM"; return f
     }()
