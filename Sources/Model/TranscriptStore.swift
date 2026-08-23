@@ -718,6 +718,56 @@ final class TranscriptStore: ObservableObject {
             }
         }
     }
+    // MARK: - Per-space delivery
+
+    @Published var spaceSendStatus: String?      // transient banner: "Отправляю…" / "Отправлено ✓" / error
+
+    /// Build one meeting's digest the way a space wants it, and deliver it through that space's bot
+    /// to that space's group. The recipe is what makes this worth having: the same meeting goes to a
+    /// client's channel as a formal protocol and to the team's as three bullets.
+    func sendMeetingToSpace(_ space: Space, meeting: SessionRecord) {
+        guard space.telegramReady else {
+            spaceSendStatus = "У пространства «\(space.name)» не заданы бот и чат."
+            return
+        }
+        let material = Self.meetingMaterial(meeting)
+        guard !material.isEmpty else {
+            spaceSendStatus = "У встречи нет содержимого для отправки."
+            return
+        }
+        let recipe = space.recipeId.flatMap { id in RecipeStore.shared.recipes.first { $0.id == id } }
+        spaceSendStatus = "Отправляю…"
+        let token = space.telegramToken
+        let chat = space.telegramChatId ?? ""
+        Task { [weak self] in
+            do {
+                var body = material
+                if let recipe {
+                    body = try await self?.runRecipe(instruction: recipe.prompt, material: material) ?? material
+                }
+                try await Telegram.send(body, token: token, chatId: chat)
+                await MainActor.run { self?.spaceSendStatus = "Отправлено в «\(space.name)» ✓" }
+            } catch {
+                let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                await MainActor.run { self?.spaceSendStatus = "Не отправилось: \(msg)" }
+                DebugLog.log("space send failed: \(msg)")
+            }
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            await MainActor.run { self?.spaceSendStatus = nil }
+        }
+    }
+
+    /// Everything known about an archived meeting, in the shape a recipe expects as input.
+    static func meetingMaterial(_ s: SessionRecord) -> String {
+        var parts = ["\(s.title) · \(archiveDate.string(from: s.date))"]
+        if let sum = s.noteSummary, !sum.isEmpty { parts.append("ИТОГ:\n" + sum.map { "• \($0)" }.joined(separator: "\n")) }
+        if let dec = s.noteDecisions, !dec.isEmpty { parts.append("РЕШЕНИЯ:\n" + dec.map { "• \($0)" }.joined(separator: "\n")) }
+        if let t = s.transcript, !t.isEmpty {
+            parts.append("РАСШИФРОВКА (в квадратных скобках — время реплики):\n" + t)
+        }
+        return parts.count > 1 ? parts.joined(separator: "\n\n") : ""
+    }
+
     /// Ask about ONE meeting. The detail footer says "по этой встрече" and used to call
     /// `askArchive`, which ranks the whole history and answers from the eight best-scoring
     /// meetings — so a question about the meeting on screen could be answered from a different

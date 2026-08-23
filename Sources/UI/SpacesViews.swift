@@ -659,7 +659,12 @@ struct SpaceEditor: View {
 
     @State private var name = ""
     @State private var color = SpaceStore.palette[0]
+    @State private var tgToken = ""
+    @State private var tgChat = ""
+    @State private var recipeId: UUID?
+    @State private var autoSend = false
     @FocusState private var nameFocused: Bool
+    @ObservedObject private var recipes = RecipeStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -694,6 +699,43 @@ struct SpaceEditor: View {
                 }
             }
 
+            // Delivery. Only offered on an existing space: the token is keyed by space id, so there
+            // is nothing to attach it to until the space has been created.
+            if space != nil {
+                Divider().overlay(Color.pLine)
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(L("Отправка в Telegram", "Telegram delivery"))
+                        .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+
+                    SecureField(L("Токен бота", "Bot token"), text: $tgToken)
+                        .textFieldStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pInk1)
+                        .frame(height: 32).padding(.horizontal, 10)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+
+                    TextField(L("ID чата или группы, например -1001234567890", "Chat or group ID, e.g. -1001234567890"), text: $tgChat)
+                        .textFieldStyle(.plain).font(PFont.secondary).foregroundStyle(Color.pInk1)
+                        .frame(height: 32).padding(.horizontal, 10)
+                        .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(Color.pButtonBorder, lineWidth: 1))
+
+                    Text(L("Рецепт для итогов", "Recipe for digests"))
+                        .font(.system(size: 11.5)).foregroundStyle(Color.pInk3).padding(.top, 2)
+                    Picker("", selection: $recipeId) {
+                        Text(L("Без рецепта — как есть", "No recipe — as captured")).tag(UUID?.none)
+                        ForEach(recipes.recipes) { r in Text(r.name).tag(UUID?.some(r.id)) }
+                    }
+                    .labelsHidden().pickerStyle(.menu)
+
+                    Toggle(isOn: $autoSend) {
+                        Text(L("Отправлять сразу, как встреча попадёт в пространство",
+                               "Send as soon as a meeting joins this space"))
+                            .font(.system(size: 12)).foregroundStyle(Color.pInk2)
+                    }
+                    .toggleStyle(.checkbox)
+                }
+            }
+
             HStack {
                 if space != nil {
                     Button(L("Удалить", "Delete")) {
@@ -710,7 +752,11 @@ struct SpaceEditor: View {
         .padding(24).frame(width: 420)
         .background(Color.pCanvas)
         .onAppear {
-            if let sp = space { name = sp.name; color = sp.colorHex }
+            if let sp = space {
+                name = sp.name; color = sp.colorHex
+                tgToken = sp.telegramToken; tgChat = sp.telegramChatId ?? ""
+                recipeId = sp.recipeId; autoSend = sp.autoSendSummary
+            }
             DispatchQueue.main.async { nameFocused = true }   // cursor in the field so it's clearly empty & typeable
         }
     }
@@ -720,6 +766,9 @@ struct SpaceEditor: View {
         guard !n.isEmpty else { return }
         if let sp = space {
             store.rename(sp.id, n); store.recolor(sp.id, color)
+            store.setTelegram(sp.id, token: tgToken, chatId: tgChat)
+            store.setRecipe(sp.id, recipeId)
+            store.setAutoSend(sp.id, autoSend)
         } else {
             let created = store.create(name: n, colorHex: color)   // MUST run unconditionally —
             onCreated?(created)                                     // `onCreated?(create())` would skip create() when the callback is nil

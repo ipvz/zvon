@@ -122,6 +122,21 @@ struct MeetingView: View {
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.suggestedMeeting?.key)
+        .overlay(alignment: .bottom) {
+            // Delivery happens in the background and can fail on the network or the bot token;
+            // silence would leave the user guessing whether anything was sent.
+            if let status = store.spaceSendStatus {
+                Text(status)
+                    .font(.system(size: 12.5, weight: .medium)).foregroundStyle(Color.pInk1)
+                    .padding(.horizontal, 14).frame(height: 34)
+                    .background(Color.pCard).clipShape(Capsule())
+                    .overlay(Capsule().strokeBorder(Color.pLine, lineWidth: 1))
+                    .shadow(color: .pShadow2, radius: 12, y: 4)
+                    .padding(.bottom, 22)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: store.spaceSendStatus)
         .frame(minWidth: 1040, minHeight: 640)
         .background(Color.pCanvas)
         .background(WindowConfigurator())   // full-size content so the shell reaches the top
@@ -454,6 +469,38 @@ struct MeetingView: View {
             }
             Button(L("Новое пространство…", "New space…")) { newSpaceForMeeting = s.id }
         }
+        let ready = spaceStore.spaces.filter(\.telegramReady)
+        if !ready.isEmpty, s.kind == .meeting {
+            Section(L("Отправить в Telegram", "Send to Telegram")) {
+                ForEach(ready) { sp in
+                    Button(sp.name) { store.sendMeetingToSpace(sp, meeting: s) }
+                }
+            }
+        }
+        // Right here on the record, not buried behind «Поделиться» on the open meeting: exporting
+        // one meeting's raw transcript is a thing you do FROM the list.
+        Section(L("Расшифровка", "Transcript")) {
+            Button(L("Копировать сырую расшифровку", "Copy raw transcript")) { copyRawTranscript(of: s) }
+            Button(L("Сохранить .txt…", "Save .txt…")) { saveRawTranscript(of: s) }
+        }
+    }
+
+    /// Exactly as archived — "[14:32:05] Собеседник: …" — roles and timings intact, nothing summarised.
+    private func rawTranscript(of s: SessionRecord) -> String { s.transcript ?? s.title }
+
+    private func copyRawTranscript(of s: SessionRecord) {
+        let text = rawTranscript(of: s)
+        guard !text.isEmpty else { return }
+        let pb = NSPasteboard.general; pb.clearContents(); pb.setString(text, forType: .string)
+    }
+
+    private func saveRawTranscript(of s: SessionRecord) {
+        let text = rawTranscript(of: s)
+        guard !text.isEmpty else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(s.title).txt"
+        panel.allowedContentTypes = [.plainText]
+        if panel.runModal() == .OK, let url = panel.url { try? Data(text.utf8).write(to: url) }
     }
 
     private func recordMeta(_ s: SessionRecord) -> String {
