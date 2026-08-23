@@ -19,6 +19,30 @@ struct Space: Codable, Identifiable, Equatable {
     var recipeId: UUID?                  // which saved recipe shapes the digest; nil = the plain итог
     var autoSendSummary = false          // send when a meeting in this space is archived
 
+    /// Decoded field by field with defaults, NOT by the synthesized initialiser. Swift's synthesized
+    /// decoder ignores a property's default value and throws on a missing key, so adding one
+    /// non-optional field made every previously saved space fail to decode — and because the whole
+    /// array decodes at once, that one missing key emptied the entire list. Any field added from
+    /// here on must tolerate being absent, for exactly that reason.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        colorHex = try c.decodeIfPresent(String.self, forKey: .colorHex) ?? SpaceStore.palette[0]
+        meetingIds = try c.decodeIfPresent([UUID].self, forKey: .meetingIds) ?? []
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        summaryAt = try c.decodeIfPresent(Date.self, forKey: .summaryAt)
+        telegramChatId = try c.decodeIfPresent(String.self, forKey: .telegramChatId)
+        recipeId = try c.decodeIfPresent(UUID.self, forKey: .recipeId)
+        autoSendSummary = try c.decodeIfPresent(Bool.self, forKey: .autoSendSummary) ?? false
+    }
+
+    init(id: UUID = UUID(), name: String, colorHex: String, meetingIds: [UUID] = [], createdAt: Date = Date()) {
+        self.id = id; self.name = name; self.colorHex = colorHex
+        self.meetingIds = meetingIds; self.createdAt = createdAt
+    }
+
     var telegramAccount: String { "telegramBot-\(id.uuidString)" }
     var telegramToken: String { Keychain.get(account: telegramAccount) ?? "" }
     /// Both halves are needed; a token without a chat posts nowhere.
@@ -29,6 +53,9 @@ struct Space: Codable, Identifiable, Equatable {
 final class SpaceStore: ObservableObject {
     static let shared = SpaceStore()
     @Published private(set) var spaces: [Space] = []
+    /// Set when the saved list could not be read. While true nothing is written back, so a bad
+    /// decode can never destroy what is on disk.
+    private(set) var loadFailed = false
 
     private static let key = "spaces"
 
@@ -127,12 +154,22 @@ final class SpaceStore: ObservableObject {
     }
 
     private func load() {
-        guard let d = UserDefaults.standard.data(forKey: Self.key),
-              let items = try? JSONDecoder().decode([Space].self, from: d) else { return }
-        spaces = items
+        guard let d = UserDefaults.standard.data(forKey: Self.key) else { return }
+        do {
+            spaces = try JSONDecoder().decode([Space].self, from: d)
+        } catch {
+            // Loud, and the stored copy is left alone. An empty in-memory list plus a save on the
+            // next edit is exactly how a decode failure becomes permanent data loss.
+            DebugLog.log("spaces: decode failed, refusing to overwrite — \(error)")
+            loadFailed = true
+        }
     }
 
     private func save() {
+        guard !loadFailed else {
+            DebugLog.log("spaces: save suppressed — the saved list never loaded")
+            return
+        }
         if let d = try? JSONEncoder().encode(spaces) { UserDefaults.standard.set(d, forKey: Self.key) }
     }
 }
