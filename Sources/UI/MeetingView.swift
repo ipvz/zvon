@@ -824,7 +824,18 @@ struct MeetingView: View {
                 .font(.system(size: 13)).foregroundStyle(Color.pInk3)
         } else {
             let matches = Self.matchingBlocks(blocks.map(\.1), query: transcriptFind)
-            transcriptFindBar(total: matches.count)
+            HStack(spacing: 8) {
+                transcriptFindBar(total: matches.count)
+                // Export sits next to the transcript itself. It used to live only behind
+                // «Поделиться», which is in the OTHER header and absent from this pane entirely —
+                // so with the transcript on screen there was no way to get it out.
+                transcriptExportButton(icon: transcriptCopied ? "checkmark" : "doc.on.doc",
+                                       hint: L("Копировать сырую расшифровку", "Copy raw transcript"),
+                                       tint: transcriptCopied) { copyTranscript() }
+                transcriptExportButton(icon: "arrow.down.doc",
+                                       hint: L("Сохранить .txt", "Save .txt")) { saveTranscript() }
+            }
+            .padding(.bottom, 4)
             // Only a session with a track on disk is playable — a stamp on its own must not offer a
             // play affordance that does nothing.
             let audioId: UUID? = past.flatMap { MeetingAudioRecorder.hasAudio(sessionId: $0.id) ? $0.id : nil }
@@ -876,9 +887,24 @@ struct MeetingView: View {
         }
         .foregroundStyle(Color.pInk3)
         .padding(.horizontal, 10).frame(height: 30)
+        .frame(maxWidth: .infinity)
         .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine, lineWidth: 1))
-        .padding(.bottom, 4)
+    }
+
+    private func transcriptExportButton(icon: String, hint: String, tint: Bool = false,
+                                        action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 12))
+                .foregroundStyle(tint ? Color.pAccent : Color.pInk2)
+                .frame(width: 30, height: 30)
+                .background(Color.pField).clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.pLine, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(hint)
+        .accessibilityLabel(hint)
     }
 
     private func stepMatch(_ delta: Int, total: Int) {
