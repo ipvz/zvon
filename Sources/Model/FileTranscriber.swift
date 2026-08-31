@@ -15,28 +15,68 @@ final class FileTranscriber: ObservableObject {
     @Published private(set) var stage: String?              // what it is doing right now
     @Published var error: String?
     @Published var finished: UUID?                          // the new record, for the UI to open
-    /// Which records came from a file. Kept beside the archive rather than as a third `kind`:
-    /// half the app splits records into meeting-or-dictation with a bare `else`, so a new case
-    /// would quietly file every import under dictation. Losing this list costs nothing — the
-    /// records stay, they simply stop being listed on the Import screen.
-    @Published private(set) var importedIds: [UUID] = []
-    private static let importedKey = "importedSessionIds"
+    /// One import, kept whether it worked or not — a failure is exactly the thing you come back to
+    /// this screen to understand. Held beside the archive rather than as a third `SessionRecord`
+    /// kind: half the app splits records into meeting-or-dictation with a bare `else`, so a new
+    /// case would quietly file every import under dictation.
+    struct Entry: Codable, Identifiable {
+        var id = UUID()
+        var fileName: String
+        var importedAt: Date
+        var audioSec: Double
+        var elapsedSec: Double        // how long the machine actually took
+        var recordId: UUID?           // nil when it failed
+        var failure: String?
+
+        /// Every field tolerates being absent — the lesson from the space list, where one new
+        /// non-optional key made the whole array undecodable and the list came back empty.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            fileName = try c.decodeIfPresent(String.self, forKey: .fileName) ?? "—"
+            importedAt = try c.decodeIfPresent(Date.self, forKey: .importedAt) ?? Date()
+            audioSec = try c.decodeIfPresent(Double.self, forKey: .audioSec) ?? 0
+            elapsedSec = try c.decodeIfPresent(Double.self, forKey: .elapsedSec) ?? 0
+            recordId = try c.decodeIfPresent(UUID.self, forKey: .recordId)
+            failure = try c.decodeIfPresent(String.self, forKey: .failure)
+        }
+        init(fileName: String, importedAt: Date, audioSec: Double, elapsedSec: Double,
+             recordId: UUID?, failure: String?) {
+            self.fileName = fileName; self.importedAt = importedAt
+            self.audioSec = audioSec; self.elapsedSec = elapsedSec
+            self.recordId = recordId; self.failure = failure
+        }
+
+        /// Realtime factor — the number people actually want to know.
+        var speedup: Double { elapsedSec > 0 ? audioSec / elapsedSec : 0 }
+    }
+
+    @Published private(set) var log: [Entry] = []
+    private static let logKey = "importLog"
 
     private init() {
-        importedIds = (UserDefaults.standard.array(forKey: Self.importedKey) as? [String] ?? [])
-            .compactMap(UUID.init(uuidString:))
+        if let data = UserDefaults.standard.data(forKey: Self.logKey) {
+            do { log = try JSONDecoder().decode([Entry].self, from: data) }
+            catch { DebugLog.log("import log: decode failed — \(error)") }
+        }
     }
 
-    /// Imported records that still exist — the library is the source of truth, so anything deleted
-    /// there disappears from here too.
-    func importedRecords() -> [SessionRecord] {
-        let all = SessionStore.shared.sessions
-        return importedIds.compactMap { id in all.first { $0.id == id } }
+    /// The record behind an entry, or nil once it has been deleted from the library — which is the
+    /// source of truth, so a removed record simply stops resolving here.
+    func record(for entry: Entry) -> SessionRecord? {
+        guard let id = entry.recordId else { return nil }
+        return SessionStore.shared.sessions.first { $0.id == id }
     }
 
-    private func remember(_ id: UUID) {
-        importedIds.insert(id, at: 0)
-        UserDefaults.standard.set(importedIds.map(\.uuidString), forKey: Self.importedKey)
+    private func remember(_ entry: Entry) {
+        log.insert(entry, at: 0)
+        if log.count > 200 { log.removeLast(log.count - 200) }
+        if let d = try? JSONEncoder().encode(log) { UserDefaults.standard.set(d, forKey: Self.logKey) }
+    }
+
+    func clearLog() {
+        log = []
+        UserDefaults.standard.removeObject(forKey: Self.logKey)
     }
 
     /// Seconds of audio handed to the model at once. Long files are not fed whole.
@@ -66,6 +106,7 @@ final class FileTranscriber: ObservableObject {
         isRunning = true; progress = 0; error = nil; finished = nil
         stage = L("Читаю файл…", "Reading the file…")
 
+        let started = Date()
         Task { [weak self] in
             do {
                 let samples = try await Self.loadSamples(url)
@@ -99,20 +140,30 @@ final class FileTranscriber: ObservableObject {
                 guard !lines.isEmpty else { throw Fault.noSpeech }
                 let id = UUID()
                 let title = url.deletingPathExtension().lastPathComponent
+                let elapsed = Date().timeIntervalSince(started)
                 await MainActor.run {
                     SessionStore.shared.addMeeting(id: id, title: String(title.prefix(80)), date: Date(),
                                                    durationSec: duration, hasSummary: false,
                                                    transcript: lines.joined(separator: "\n"),
                                                    noteSummary: nil)
-                    self?.remember(id)
+                    self?.remember(Entry(fileName: url.lastPathComponent, importedAt: Date(),
+                                         audioSec: duration, elapsedSec: elapsed,
+                                         recordId: id, failure: nil))
                     self?.finished = id
                     self?.isRunning = false; self?.stage = nil; self?.progress = 1
                 }
-                DebugLog.log("import: transcribed \(Int(duration))s from \(url.lastPathComponent)")
+                DebugLog.log(String(format: "import: %@ — %.0fs audio in %.1fs (%.0f× realtime)",
+                                    url.lastPathComponent, duration, elapsed, elapsed > 0 ? duration / elapsed : 0))
             } catch {
                 let msg = (error as? Fault)?.text ?? error.localizedDescription
                 DebugLog.log("import failed: \(msg)")
-                await MainActor.run { self?.error = msg; self?.isRunning = false; self?.stage = nil }
+                await MainActor.run {
+                    // A failure is logged too — it is the thing you come back to this screen about.
+                    self?.remember(Entry(fileName: url.lastPathComponent, importedAt: Date(),
+                                         audioSec: 0, elapsedSec: Date().timeIntervalSince(started),
+                                         recordId: nil, failure: msg))
+                    self?.error = msg; self?.isRunning = false; self?.stage = nil
+                }
             }
         }
     }

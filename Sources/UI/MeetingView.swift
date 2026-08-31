@@ -110,6 +110,9 @@ struct MeetingView: View {
                         CommandsView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else if mainView == .spaces {
                         spacesPane.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
+                    } else if mainView == .imports {
+                        ImportView { id in selectedId = id; mainView = .meeting; detailTab = .transcript }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else {
                         recordsColumn             // 308
                         detailColumn              // remainder (min 420)
@@ -1112,7 +1115,7 @@ struct MeetingView: View {
         case .commands: return L("\(CommandStore.shared.commands.count) команд", "\(CommandStore.shared.commands.count) commands")
         case .spaces: return L("\(spaceStore.spaces.count) пространств", "\(spaceStore.spaces.count) spaces")
         case .imports:
-            let n = FileTranscriber.shared.importedRecords().count
+            let n = FileTranscriber.shared.log.filter { $0.failure == nil }.count
             return L("\(n) файлов расшифровано", "\(n) files transcribed")
         }
     }
@@ -1129,6 +1132,8 @@ struct MeetingView: View {
         case .spaces:  spacesPane
         case .imports: ImportView { id in selectedId = id; mainView = .meeting; detailTab = .transcript }
         }
+        // NOTE: the window actually renders the if/else chain in `body`, not this switch. Any new
+        // destination has to be added there too, or it silently falls through to the records pane.
     }
 
     private var meetingContent: some View {

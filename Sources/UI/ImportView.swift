@@ -113,32 +113,75 @@ struct ImportView: View {
     }
 
     @ViewBuilder private var historySection: some View {
-        let records = importer.importedRecords()
         VStack(alignment: .leading, spacing: 10) {
-            Text(L("Импортированные", "Imported")).font(PFont.label).tracking(0.4)
-                .foregroundStyle(Color.pInk3)
-            if records.isEmpty {
-                Text(L("Пока пусто. Импортированные файлы появятся здесь и в «Записях».",
-                       "Nothing yet. Imported files show up here and in Records."))
+            HStack {
+                Text(L("История", "History")).font(PFont.label).tracking(0.4).foregroundStyle(Color.pInk3)
+                Spacer()
+                if !importer.log.isEmpty {
+                    Button(L("Очистить", "Clear")) { importer.clearLog() }
+                        .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Color.pInk3)
+                        .help(L("Убрать записи журнала — сами расшифровки останутся",
+                                "Clear the log — the transcripts themselves stay"))
+                }
+            }
+            if importer.log.isEmpty {
+                Text(L("Пока пусто. Расшифрованные файлы появятся здесь и в «Записях».",
+                       "Nothing yet. Transcribed files show up here and in Records."))
                     .font(.system(size: 12.5)).foregroundStyle(Color.pInk3)
             } else {
-                VStack(spacing: 1) {
-                    ForEach(records) { r in row(r) }
+                VStack(spacing: 6) {
+                    ForEach(importer.log) { entry in row(entry) }
                 }
             }
         }
     }
 
-    private func row(_ r: SessionRecord) -> some View {
-        Button { onOpen(r.id) } label: {
-            HStack(spacing: 10) {
-                Image(systemName: "waveform").font(.system(size: 12)).foregroundStyle(Color.pInk3).frame(width: 16)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(r.title).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
-                    Text(r.subtitle).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+    private static let stamp: DateFormatter = {
+        let f = DateFormatter(); f.locale = Locale(identifier: "ru_RU"); f.dateFormat = "d MMM, HH:mm"; return f
+    }()
+
+    private func hms(_ t: Double) -> String {
+        let s = Int(t)
+        return s >= 3600 ? String(format: "%d ч %02d мин", s / 3600, (s % 3600) / 60)
+                         : String(format: "%d мин %02d с", s / 60, s % 60)
+    }
+
+    private func row(_ entry: FileTranscriber.Entry) -> some View {
+        let record = importer.record(for: entry)
+        let gone = entry.failure == nil && record == nil
+        return Button {
+            if let record { onOpen(record.id) }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: entry.failure == nil ? (gone ? "trash" : "waveform") : "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(entry.failure == nil ? (gone ? Color.pInk3 : Color.pAccent) : Color.pDanger)
+                    .frame(width: 16).padding(.top, 1)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(entry.fileName).font(PFont.secondary).foregroundStyle(Color.pInk1).lineLimit(1)
+                    if let failure = entry.failure {
+                        Text(failure).font(.system(size: 11.5)).foregroundStyle(Color.pDanger)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        // The three numbers worth keeping: when, how long the audio was, and how
+                        // long the machine took to get through it.
+                        Text([Self.stamp.string(from: entry.importedAt),
+                              hms(entry.audioSec),
+                              String(format: L("за %.0f с · %.0f× быстрее реального времени",
+                                               "in %.0fs · %.0f× realtime"), entry.elapsedSec, entry.speedup)]
+                                .joined(separator: " · "))
+                            .font(.system(size: 11.5)).foregroundStyle(Color.pInk3).lineLimit(1)
+                    }
+                    if gone {
+                        Text(L("Запись удалена из библиотеки", "Record deleted from the library"))
+                            .font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                    }
                 }
                 Spacer(minLength: 0)
-                Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Color.pInk3)
+                if record != nil {
+                    Image(systemName: "chevron.right").font(.system(size: 10)).foregroundStyle(Color.pInk3).padding(.top, 2)
+                }
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
             .background(RoundedRectangle(cornerRadius: 8).fill(Color.pCard))
@@ -146,5 +189,6 @@ struct ImportView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(record == nil)
     }
 }
