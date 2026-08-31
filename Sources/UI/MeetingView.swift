@@ -27,6 +27,7 @@ struct MeetingView: View {
     @State private var pastNotesDraft = ""            // editable copy of a past record's «Мои заметки»
     @State private var pastNotesFor: UUID?            // which record pastNotesDraft belongs to
     @State private var detailAsk = ""
+    @ObservedObject private var importer = FileTranscriber.shared
     @State private var transcriptCopied = false
     @State private var transcriptFind = ""            // plain text find inside the open transcript
     @State private var findFocused = false
@@ -120,6 +121,16 @@ struct MeetingView: View {
                     }
                 }
             }
+        }
+        .onChange(of: importer.finished) { _, id in
+            guard let id else { return }
+            selectedId = id; mainView = .meeting; detailTab = .transcript; showingSettings = false
+        }
+        .alert(L("Не удалось транскрибировать", "Could not transcribe"),
+               isPresented: Binding(get: { importer.error != nil }, set: { if !$0 { importer.error = nil } })) {
+            Button("OK", role: .cancel) { importer.error = nil }
+        } message: {
+            Text(importer.error ?? "")
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.suggestedMeeting?.key)
         .overlay(alignment: .bottom) {
@@ -317,8 +328,51 @@ struct MeetingView: View {
     private var navSection: some View {
         VStack(spacing: 2) {
             navRow(.records); navRow(.tasks); navRow(.spaces); navRow(.commands); navRow(.gloss)
+            importRow
         }
         .padding(.horizontal, 12).padding(.top, 16)
+    }
+
+    /// An action, not a destination — so it is a row here rather than a MainView case. Transcribing
+    /// a file someone else recorded lands it in the library as an ordinary record, which is what
+    /// makes search, export, recipes and spaces work on it without any of them knowing it was
+    /// imported.
+    private var importRow: some View {
+        Button {
+            guard !store.isRecording, !store.isDictating else {
+                importer.error = L("Сначала остановите запись — модель занята.",
+                                   "Stop the recording first — the model is busy.")
+                return
+            }
+            importer.pickAndTranscribe(language: store.language)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: importer.isRunning ? "waveform.circle" : "square.and.arrow.down")
+                    .font(.system(size: 12))
+                    .foregroundStyle(importer.isRunning ? Color.pAccent : Color.pInk2).frame(width: 16)
+                Text(importer.isRunning ? L("Транскрибирую…", "Transcribing…")
+                                        : L("Транскрибировать файл", "Transcribe a file"))
+                    .font(.system(size: 13.5)).foregroundStyle(importer.isRunning ? Color.pAccent : Color.pInk1)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10).frame(height: 32)
+            .background(RoundedRectangle(cornerRadius: 7).fill(importer.isRunning ? Color.pAccent.opacity(0.14) : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(importer.isRunning)
+        .help(L("Аудио или видео — распознавание пройдёт на этом Mac",
+                "Audio or video — recognition runs on this Mac"))
+        .overlay(alignment: .bottom) {
+            if importer.isRunning {
+                GeometryReader { g in
+                    Capsule().fill(Color.pAccent)
+                        .frame(width: g.size.width * importer.progress, height: 2)
+                }
+                .frame(height: 2)
+            }
+        }
     }
 
     /// A sidebar nav row (spec §2.4): active = teal wash + #4FE0E0 text; a right-hand count/badge.
