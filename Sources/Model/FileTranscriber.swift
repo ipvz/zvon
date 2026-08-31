@@ -15,6 +15,29 @@ final class FileTranscriber: ObservableObject {
     @Published private(set) var stage: String?              // what it is doing right now
     @Published var error: String?
     @Published var finished: UUID?                          // the new record, for the UI to open
+    /// Which records came from a file. Kept beside the archive rather than as a third `kind`:
+    /// half the app splits records into meeting-or-dictation with a bare `else`, so a new case
+    /// would quietly file every import under dictation. Losing this list costs nothing — the
+    /// records stay, they simply stop being listed on the Import screen.
+    @Published private(set) var importedIds: [UUID] = []
+    private static let importedKey = "importedSessionIds"
+
+    private init() {
+        importedIds = (UserDefaults.standard.array(forKey: Self.importedKey) as? [String] ?? [])
+            .compactMap(UUID.init(uuidString:))
+    }
+
+    /// Imported records that still exist — the library is the source of truth, so anything deleted
+    /// there disappears from here too.
+    func importedRecords() -> [SessionRecord] {
+        let all = SessionStore.shared.sessions
+        return importedIds.compactMap { id in all.first { $0.id == id } }
+    }
+
+    private func remember(_ id: UUID) {
+        importedIds.insert(id, at: 0)
+        UserDefaults.standard.set(importedIds.map(\.uuidString), forKey: Self.importedKey)
+    }
 
     /// Seconds of audio handed to the model at once. Long files are not fed whole.
     private static let window: Double = 90
@@ -34,6 +57,9 @@ final class FileTranscriber: ObservableObject {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         transcribe(url, language: language)
     }
+
+    /// True while nothing else is holding the model.
+    var canStart: Bool { !isRunning && !TranscriptStore.shared.isRecording && !TranscriptStore.shared.isDictating }
 
     func transcribe(_ url: URL, language: String) {
         guard !isRunning else { return }
@@ -78,6 +104,7 @@ final class FileTranscriber: ObservableObject {
                                                    durationSec: duration, hasSummary: false,
                                                    transcript: lines.joined(separator: "\n"),
                                                    noteSummary: nil)
+                    self?.remember(id)
                     self?.finished = id
                     self?.isRunning = false; self?.stage = nil; self?.progress = 1
                 }

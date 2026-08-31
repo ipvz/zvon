@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Which view the main pane shows — switched from the sidebar nav (single window).
 enum MainView: String, CaseIterable, Identifiable {
-    case meeting, records, tasks, spaces, gloss, commands
+    case meeting, records, tasks, spaces, gloss, commands, imports
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -12,6 +12,8 @@ enum MainView: String, CaseIterable, Identifiable {
         case .spaces:  return L("Пространства", "Spaces")
         case .gloss:   return L("Словарь", "Glossary")
         case .commands: return L("Команды", "Commands")
+        // One word on purpose: the sidebar row is narrow and anything longer truncates.
+        case .imports: return L("Импорт", "Import")
         }
     }
     var icon: String {
@@ -22,6 +24,7 @@ enum MainView: String, CaseIterable, Identifiable {
         case .spaces:  return "square.grid.2x2"
         case .gloss:   return "character.book.closed"
         case .commands: return "bolt"
+        case .imports: return "square.and.arrow.down"
         }
     }
 }
