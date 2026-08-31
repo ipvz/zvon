@@ -13,6 +13,13 @@ struct ImportView: View {
     @ObservedObject private var loc = L11n.shared
     @State private var dropTargeted = false
 
+    /// The most recent successful import, while it is still the newest thing in the log — a plain
+    /// "here is what came out, open it" instead of throwing the user into another pane.
+    private var justFinished: SessionRecord? {
+        guard let first = importer.log.first, first.failure == nil else { return nil }
+        return importer.record(for: first)
+    }
+
     private var busyReason: String? {
         if store.isRecording { return L("Идёт запись — модель занята", "Recording in progress — the model is busy") }
         if store.isDictating { return L("Идёт диктовка — модель занята", "Dictation in progress — the model is busy") }
@@ -26,7 +33,7 @@ struct ImportView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     dropZone
-                    if importer.isRunning { runningCard }
+                    if importer.isRunning { runningCard } else if let done = justFinished { doneCard(done) }
                     historySection
                 }
                 .padding(.horizontal, 30).padding(.top, 24).padding(.bottom, 28)
@@ -110,6 +117,29 @@ struct ImportView: View {
         .padding(14)
         .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pLine, lineWidth: 1))
+    }
+
+    private func doneCard(_ record: SessionRecord) -> some View {
+        HStack(spacing: 11) {
+            ZStack {
+                Circle().fill(Color.pAccent.opacity(0.16)).frame(width: 28, height: 28)
+                Image(systemName: "checkmark").font(.system(size: 12, weight: .bold)).foregroundStyle(Color.pAccent)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(L("Готово: \(record.title)", "Done: \(record.title)"))
+                    .font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Color.pInk1).lineLimit(1)
+                Text(L("Расшифровка в «Записях». Итог не собирается сам — соберите документ по рецепту, если нужен.",
+                       "The transcript is in Records. No summary is generated automatically — build one from a recipe if you want it."))
+                    .font(.system(size: 11.5)).foregroundStyle(Color.pInk3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Button(L("Открыть", "Open")) { onOpen(record.id) }
+                .buttonStyle(PPrimaryButtonStyle())
+        }
+        .padding(14)
+        .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pAccent.opacity(0.4), lineWidth: 1))
     }
 
     @ViewBuilder private var historySection: some View {

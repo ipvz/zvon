@@ -24,6 +24,10 @@ struct MeetingView: View {
     @State private var showRecipes = false
     @State private var recFilter: RecordFilter = .all
     @State private var detailTab: DetailTab = .summary
+    /// Which tab the NEXT selection should open on. Selecting a record resets the tab to «Итог»,
+    /// which is right when you pick a meeting from the list and wrong when you open an import —
+    /// its summary is empty and the transcript is the whole point.
+    @State private var pendingDetailTab: DetailTab?
     @State private var pastNotesDraft = ""            // editable copy of a past record's «Мои заметки»
     @State private var pastNotesFor: UUID?            // which record pastNotesDraft belongs to
     @State private var detailAsk = ""
@@ -111,8 +115,11 @@ struct MeetingView: View {
                     } else if mainView == .spaces {
                         spacesPane.frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else if mainView == .imports {
-                        ImportView { id in selectedId = id; mainView = .meeting; detailTab = .transcript }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
+                        ImportView { id in
+                            pendingDetailTab = .transcript
+                            selectedId = id; mainView = .meeting
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity).background(Color.pCanvas)
                     } else {
                         recordsColumn             // 308
                         detailColumn              // remainder (min 420)
@@ -124,10 +131,6 @@ struct MeetingView: View {
                     }
                 }
             }
-        }
-        .onChange(of: importer.finished) { _, id in
-            guard let id, mainView == .imports else { return }   // don't yank the user out of another screen
-            selectedId = id; mainView = .meeting; detailTab = .transcript; showingSettings = false
         }
         .alert(L("Не удалось транскрибировать", "Could not transcribe"),
                isPresented: Binding(get: { importer.error != nil }, set: { if !$0 { importer.error = nil } })) {
@@ -164,7 +167,11 @@ struct MeetingView: View {
             else { detailTab = .summary }
         }
         // Selecting a past record shows its Итог first (per spec).
-        .onChange(of: selectedId) { _, id in if id != nil { detailTab = .summary } }
+        .onChange(of: selectedId) { _, id in
+            guard id != nil else { return }
+            detailTab = pendingDetailTab ?? .summary
+            pendingDetailTab = nil
+        }
         // "Недавние" in the menu-bar popover asks the main window to open a session.
         .onChange(of: store.pendingOpenSession) { _, id in
             if let id { selectedId = id; mainView = .meeting; showingSettings = false; store.pendingOpenSession = nil }
@@ -1130,7 +1137,7 @@ struct MeetingView: View {
         case .gloss:   GlossaryView()
         case .commands: CommandsView()
         case .spaces:  spacesPane
-        case .imports: ImportView { id in selectedId = id; mainView = .meeting; detailTab = .transcript }
+        case .imports: ImportView { id in pendingDetailTab = .transcript; selectedId = id; mainView = .meeting }
         }
         // NOTE: the window actually renders the if/else chain in `body`, not this switch. Any new
         // destination has to be added there too, or it silently falls through to the records pane.
