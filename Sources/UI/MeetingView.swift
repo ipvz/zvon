@@ -1207,8 +1207,12 @@ struct MeetingView: View {
             meetingTasks(store.currentSessionId)
 
             LazyVStack(alignment: .leading, spacing: 14) {
+                let base = store.recordingStartedAt
                 ForEach(store.lines) { line in
-                    TranscriptBlock(speaker: line.speaker.title, text: line.text, partial: !line.isFinal)
+                    // Stamped here too, so a line copied out of a live meeting still says when it
+                    // was said. No audio yet — the file is still open — so there is nothing to play.
+                    TranscriptBlock(speaker: line.speaker.title, text: line.text, partial: !line.isFinal,
+                                    stamp: base.map { TranscriptStore.turnClock.string(from: $0.addingTimeInterval(max(0, line.startSec))) })
                 }
             }
 
@@ -1767,6 +1771,36 @@ struct TranscriptBlock: View {
 
     @ObservedObject private var audio = MeetingAudioPlayer.shared
     @State private var hovering = false
+    @State private var copied = false
+
+    /// The fragment as it appears in an export — stamp, speaker, text. Pasting a bare sentence
+    /// somewhere else loses who said it and when, which is most of why the line was worth copying.
+    private var lineText: String {
+        let head = [stamp, speaker.isEmpty ? nil : speaker].compactMap { $0 }.joined(separator: " ")
+        return head.isEmpty ? text : "[\(head)] \(text)"
+    }
+
+    private func copyLine() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(lineText, forType: .string)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { copied = false }
+    }
+
+    private func lineButton(_ icon: String, hint: String, tint: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 10))
+                .foregroundStyle(tint ? Color.pAccent : Color.pInk3)
+                .frame(width: 22, height: 22)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.pField))
+                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.pLine2, lineWidth: 1))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(hint)
+        .accessibilityLabel(hint)
+    }
 
     /// Marks every occurrence of the query. Built as AttributedString rather than by slicing Text,
     /// so a match spanning punctuation or repeated in one line still renders as one run of prose.
@@ -1804,16 +1838,29 @@ struct TranscriptBlock: View {
                         Text(speaker).font(PFont.secondaryStrong).foregroundStyle(isActive ? Color.pAccent : Color.pInk2)
                     }
                     if let stamp {
-                        HStack(spacing: 4) {
-                            if playable, hovering || isActive {
-                                Image(systemName: isActive && audio.isPlaying ? "waveform" : "play.fill")
-                                    .font(.system(size: 8.5))
-                            }
-                            Text(stamp).font(PFont.monoSecondary)
-                        }
-                        .foregroundStyle(isActive ? Color.pAccent : (hovering && playable ? Color.pInk2 : Color.pInk3))
+                        Text(stamp).font(PFont.monoSecondary)
+                            .foregroundStyle(isActive ? Color.pAccent : Color.pInk3)
                     }
                     Spacer(minLength: 0)
+                    // Per-line actions. Explicit buttons rather than a whole-block gesture: the
+                    // text is selectable, so a click on it means "select", and copying one
+                    // fragment had no affordance at all — only the entire transcript did.
+                    if hovering || copied || isActive {
+                        HStack(spacing: 2) {
+                            if playable {
+                                lineButton(isActive && audio.isPlaying ? "pause.fill" : "play.fill",
+                                           hint: L("Проиграть с этого места", "Play from here"),
+                                           tint: isActive) {
+                                    if isActive && audio.isPlaying { audio.toggle() }
+                                    else if let id = sessionId, let at { audio.play(sessionId: id, at: at) }
+                                }
+                            }
+                            lineButton(copied ? "checkmark" : "doc.on.doc",
+                                       hint: L("Скопировать эту реплику", "Copy this line"),
+                                       tint: copied) { copyLine() }
+                        }
+                        .transition(.opacity)
+                    }
                 }
                 (Text(Self.marked(text, query: highlight, current: isCurrentMatch)) + Text(partial ? " …" : "").foregroundColor(Color.pInk3))
                     .font(PFont.body).lineSpacing(5)
@@ -1827,13 +1874,8 @@ struct TranscriptBlock: View {
             .fill(isActive ? Color.pAccentWash : (hovering && playable ? Color.pSelection : Color.clear)))
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering = $0 }
-        // Text stays selectable, so the tap lives on the block rather than on a Button wrapping it.
-        .onTapGesture {
-            guard let id = sessionId, let at else { return }
-            MeetingAudioPlayer.shared.play(sessionId: id, at: at)
-        }
-        .help(playable ? L("Прослушать с этого момента", "Play from here") : "")
         .animation(.easeOut(duration: 0.15), value: isActive)
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 
