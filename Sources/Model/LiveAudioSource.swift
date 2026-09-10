@@ -44,6 +44,12 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     private var buffer: [Float] = []
     private var energy: [Float] = []            // last ≤16 relative-energy frames for the level meter
     private var tapped = false
+    /// Multi-channel input only: which capsule actually carries the voice, and the energy tally
+    /// that decides it.
+    private var chosenChannel: Int?
+    private var channelEnergy: [Double] = []
+    private var probedFrames = 0
+    private var buffersSeen = 0
     /// What the transcriber consumes, regardless of what the hardware hands us.
     private static let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
                                               channels: 1, interleaved: false)!
@@ -84,6 +90,7 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
 
     private func startOnce() throws {
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
+        chosenChannel = nil; channelEnergy = []; probedFrames = 0; buffersSeen = 0
 
         let input = engine.inputNode
         let inputFormat = input.inputFormat(forBus: 0)
@@ -121,7 +128,13 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
 
     /// Fold whatever the hardware sent to one channel — the converter is only asked to change the
     /// sample rate, which it does reliably for any device.
-    private static func downmix(_ buf: AVAudioPCMBuffer) -> [Float] {
+    ///
+    /// Which channel to take is MEASURED, not assumed. On a multi-channel input the first channel
+    /// is not necessarily the voice: an array can put a reference or a silent feed there, and
+    /// picking it blindly gives a microphone that runs without ever hearing anything. Energy is
+    /// accumulated per channel over the first second and the loudest one wins, after which the
+    /// choice is fixed so the signal never jumps between capsules mid-sentence.
+    private func downmix(_ buf: AVAudioPCMBuffer) -> [Float] {
         let n = Int(buf.frameLength), channels = Int(buf.format.channelCount)
         guard let data = buf.floatChannelData, n > 0, channels > 0 else { return [] }
         if channels == 1 { return Array(UnsafeBufferPointer(start: data[0], count: n)) }
@@ -130,15 +143,31 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
             for i in 0..<n { out[i] = (data[0][i] + data[1][i]) * 0.5 }
             return out
         }
-        // More than stereo means a microphone array: the channels are physically spaced capsules,
-        // so averaging them comb-filters the voice. Take the first, which is a plain mic feed.
-        return Array(UnsafeBufferPointer(start: data[0], count: n))
+
+        if chosenChannel == nil {
+            if channelEnergy.count != channels { channelEnergy = [Double](repeating: 0, count: channels) }
+            for c in 0..<channels {
+                var e: Double = 0
+                for i in 0..<n { e += Double(data[c][i] * data[c][i]) }
+                channelEnergy[c] += e
+            }
+            probedFrames += n
+            if probedFrames >= Int(buf.format.sampleRate) {          // one second is plenty to tell
+                let best = channelEnergy.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+                chosenChannel = best
+                let levels = channelEnergy.enumerated()
+                    .map { String(format: "ch%d=%.5f", $0.offset, ($0.element / Double(probedFrames)).squareRoot()) }
+                    .joined(separator: " ")
+                DebugLog.log("mic array: \(levels) → using ch\(best)")
+            }
+        }
+        return Array(UnsafeBufferPointer(start: data[chosenChannel ?? 0], count: n))
     }
 
     /// Convert one hardware buffer to 16 kHz mono and publish it. Runs on the audio thread.
     private func ingest(_ buf: AVAudioPCMBuffer) {
         guard let converter, let monoFormat else { return }
-        let folded = Self.downmix(buf)
+        let folded = downmix(buf)
         guard !folded.isEmpty,
               let source = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: AVAudioFrameCount(folded.count)),
               let src = source.floatChannelData?[0] else { return }
@@ -157,6 +186,16 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
         }
         guard error == nil, out.frameLength > 0, let ch = out.floatChannelData?[0] else { return }
         let chunk = Array(UnsafeBufferPointer(start: ch, count: Int(out.frameLength)))
+
+        // Proof of life for the tap: a capture that installs cleanly and then hears nothing is
+        // indistinguishable from a working one until someone speaks into it.
+        buffersSeen += 1
+        if buffersSeen == 25 {
+            var peak: Float = 0
+            lock.lock(); let recent = buffer.suffix(16_000); lock.unlock()
+            for v in recent { peak = max(peak, abs(v)) }
+            DebugLog.log(String(format: "mic tap alive: %d buffers, peak %.4f over last second", buffersSeen, peak))
+        }
 
         lock.lock()
         self.buffer.append(contentsOf: chunk)
