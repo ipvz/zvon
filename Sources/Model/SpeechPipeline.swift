@@ -34,7 +34,7 @@ actor SpeechPipeline {
         await engine.setLanguage(language.flatMap(Language.parley))
 
         let onEvent = self.onEvent
-        let micSource = MicAudioSource(AudioProcessor())
+        let micSource = MicAudioSource()
         if let recorder { micSource.onSamples = { recorder.append($0, from: .me) } }
         let mic = UtteranceTranscriber(
             decode: { await engine.decode($0) },

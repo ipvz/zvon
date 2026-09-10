@@ -22,41 +22,41 @@ protocol LiveAudioSource: AnyObject, Sendable {
     func purge(keepingLast keepCount: Int)
 }
 
-/// Live microphone via WhisperKit's `AudioProcessor`.
+/// Live microphone on our own `AVAudioEngine` tap.
 ///
-/// CRASH FIX (heap corruption / `POINTER_BEING_FREED_WAS_NOT_ALLOCATED` on stop): WhisperKit appends
-/// to its `audioSamples: ContiguousArray<Float>` on the real-time audio thread (`processBuffer`) with
-/// NO lock. Reading that array from the VAD actor via `Array(processor.audioSamples)` races the
-/// append — a Swift array read while another thread appends can free/realloc the shared backing store
-/// out from under the reader → SIGABRT. Same for `relativeEnergy`.
+/// Not WhisperKit's `AudioProcessor`: it builds a fixed capture format and gives up when the input
+/// does not fit, which the built-in MacBook Pro microphone now does not — macOS exposes that mic
+/// array as THREE channels at 96 kHz, and every start died with "Failed to create node format".
+/// Retrying could not help; the device is simply shaped that way.
 ///
-/// So we keep our OWN lock-protected buffer, fed by the `startRecordingLive` callback. That callback
-/// is invoked synchronously inside `processBuffer`, on the audio thread, right after the chunk is
-/// appended — so our buffer has a single writer (the audio thread, serialized by the input tap) and
-/// is read by the actor only under the lock. We never touch `processor.audioSamples`/`relativeEnergy`
-/// from any other thread; we bound WhisperKit's own (now unread) buffer via `purgeAudioSamples` inside
-/// the callback, which is safe because it runs on the same thread as the append.
+/// Here the tap is installed with whatever format the node reports and an `AVAudioConverter` brings
+/// it down to the 16 kHz mono the transcriber wants. Channel count and sample rate stop mattering,
+/// which is the same approach the system-audio tap already takes.
+///
+/// Owning the buffer also removes the heap corruption that came from reading WhisperKit's
+/// `audioSamples` array while its audio thread appended to it: there is one writer here, the tap,
+/// and readers take the lock.
 final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
-    private let processor: any AudioProcessing
+    private let engine = AVAudioEngine()
+    private var converter: AVAudioConverter?
+    private var monoFormat: AVAudioFormat?
     private let lock = NSLock()
     private var buffer: [Float] = []
     private var energy: [Float] = []            // last ≤16 relative-energy frames for the level meter
-    private static let internalCap = 240_000    // ~15 s @16 kHz — cap WhisperKit's own buffer growth
-    /// Optional tap for archiving the audio. Called on the audio thread with the raw chunk, before
-    /// any VAD or windowing, so the recording is continuous and gap-free regardless of what the
-    /// transcriber decides to keep.
+    private var tapped = false
+    /// What the transcriber consumes, regardless of what the hardware hands us.
+    private static let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                              channels: 1, interleaved: false)!
+    /// Optional tap for archiving the audio. Called on the audio thread with the converted chunk,
+    /// before any VAD or windowing, so the recording is continuous and gap-free regardless of what
+    /// the transcriber decides to keep.
     var onSamples: (@Sendable ([Float]) -> Void)?
 
-    init(_ processor: any AudioProcessing) {
-        self.processor = processor
-    }
+    init() {}
 
-    /// Retried, because the common failure here is TRANSIENT and the old behaviour left dictation
-    /// dead until the app was relaunched. Ending a meeting destroys the aggregate device the system
-    /// tap was built on; while CoreAudio settles, the default input can briefly report an invalid
-    /// format and AVAudioEngine answers "Failed to create node format". A device arriving or leaving
-    /// (Continuity mic, headset, virtual device) does the same. One attempt lost the whole feature
-    /// to a window a few hundred milliseconds wide.
+    /// Retried, because a start can also fail for a genuinely transient reason: ending a meeting
+    /// destroys the aggregate device the system tap was built on, and while CoreAudio settles the
+    /// default input can briefly report nothing usable. A device arriving or leaving does the same.
     func start() throws {
         var lastError: Error?
         for attempt in 1...3 {
@@ -67,7 +67,7 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
             } catch {
                 lastError = error
                 DebugLog.log("mic start attempt \(attempt) failed: \(error.localizedDescription) — \(Self.inputDescription())")
-                stop()                                   // drop any half-installed tap before retrying
+                stop()
                 if attempt < 3 { Thread.sleep(forTimeInterval: 0.4) }
             }
         }
@@ -75,45 +75,108 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
                                    userInfo: [NSLocalizedDescriptionKey: "Микрофон недоступен"])
     }
 
-    /// The input as CoreAudio sees it right now. Logged on failure — "Failed to create node format"
-    /// on its own never said WHICH device was wrong or what it claimed to be.
+    /// The input as CoreAudio sees it right now — logged on failure, because "Failed to create node
+    /// format" on its own never said which device was wrong or what it claimed to be.
     private static func inputDescription() -> String {
-        let engine = AVAudioEngine()
-        let f = engine.inputNode.inputFormat(forBus: 0)
+        let f = AVAudioEngine().inputNode.inputFormat(forBus: 0)
         return "input \(Int(f.sampleRate)) Hz \(f.channelCount) ch"
     }
 
     private func startOnce() throws {
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
-        // AVFAudio's installTapOnBus (inside startRecordingLive) raises an ObjC NSException when the mic
-        // input is unavailable / the device changed / a tap is still attached from a too-fast restart.
-        // Swift `try` can't catch that — it would abort the app. Bridge it to a Swift error instead so
-        // the pipeline surfaces "микрофон недоступен" and the session ends cleanly.
-        var swiftError: Error?
+
+        let input = engine.inputNode
+        let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw NSError(domain: "ZVON", code: -2, userInfo: [NSLocalizedDescriptionKey:
+                "Микрофон недоступен — система не сообщает формат входа."])
+        }
+        // Channels are folded by hand and only the SAMPLE RATE is left to the converter. Handing it
+        // a multi-channel source instead produces frames of pure silence: a mic array reports a
+        // discrete channel layout, for which no downmix is defined, so the converter has nothing to
+        // mix and emits nothing. Measured: 3 ch and 2 ch both came out at peak 0.000, mono did not.
+        guard let mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: inputFormat.sampleRate,
+                                       channels: 1, interleaved: false),
+              let converter = AVAudioConverter(from: mono, to: Self.target) else {
+            throw NSError(domain: "ZVON", code: -3, userInfo: [NSLocalizedDescriptionKey:
+                "Не удалось привести формат микрофона (\(Int(inputFormat.sampleRate)) Гц, \(inputFormat.channelCount) кан.)."])
+        }
+        self.converter = converter
+        self.monoFormat = mono
+        DebugLog.log("mic tap: \(Int(inputFormat.sampleRate)) Hz, \(inputFormat.channelCount) ch → 16000 Hz mono")
+
+        // installTapOnBus raises an ObjC NSException when a tap is still attached from a too-fast
+        // restart or the device vanished mid-call. Swift `try` cannot catch that — it would abort
+        // the process — so it is bridged to a Swift error.
         let nsError = zvonCatchNSException {
-            do {
-                try self.processor.startRecordingLive { [weak self] chunk in
-                    guard let self else { return }
-                    // Audio thread, same call that appended `chunk` to the processor's own buffer.
-                    self.lock.lock()
-                    self.buffer.append(contentsOf: chunk)
-                    var s: Float = 0; for v in chunk { s += v * v }
-                    let rms = chunk.isEmpty ? 0 : (s / Float(chunk.count)).squareRoot()
-                    self.energy.append(min(1, rms * 14))   // rough 0…1 level for the meters
-                    if self.energy.count > 16 { self.energy.removeFirst(self.energy.count - 16) }
-                    self.lock.unlock()
-                    self.onSamples?(chunk)
-                    // Keep WhisperKit's internal (unread) buffer from growing all session — safe here.
-                    self.processor.purgeAudioSamples(keepingLast: Self.internalCap)
-                }
-            } catch { swiftError = error }
+            input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buf, _ in
+                self?.ingest(buf)
+            }
+            self.tapped = true
+            self.engine.prepare()
         }
         if let nsError { throw nsError }
-        if let swiftError { throw swiftError }
+        try engine.start()
+    }
+
+    /// Fold whatever the hardware sent to one channel — the converter is only asked to change the
+    /// sample rate, which it does reliably for any device.
+    private static func downmix(_ buf: AVAudioPCMBuffer) -> [Float] {
+        let n = Int(buf.frameLength), channels = Int(buf.format.channelCount)
+        guard let data = buf.floatChannelData, n > 0, channels > 0 else { return [] }
+        if channels == 1 { return Array(UnsafeBufferPointer(start: data[0], count: n)) }
+        if channels == 2 {
+            var out = [Float](repeating: 0, count: n)
+            for i in 0..<n { out[i] = (data[0][i] + data[1][i]) * 0.5 }
+            return out
+        }
+        // More than stereo means a microphone array: the channels are physically spaced capsules,
+        // so averaging them comb-filters the voice. Take the first, which is a plain mic feed.
+        return Array(UnsafeBufferPointer(start: data[0], count: n))
+    }
+
+    /// Convert one hardware buffer to 16 kHz mono and publish it. Runs on the audio thread.
+    private func ingest(_ buf: AVAudioPCMBuffer) {
+        guard let converter, let monoFormat else { return }
+        let folded = Self.downmix(buf)
+        guard !folded.isEmpty,
+              let source = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: AVAudioFrameCount(folded.count)),
+              let src = source.floatChannelData?[0] else { return }
+        source.frameLength = AVAudioFrameCount(folded.count)
+        folded.withUnsafeBufferPointer { src.update(from: $0.baseAddress!, count: folded.count) }
+
+        let ratio = Self.target.sampleRate / monoFormat.sampleRate
+        let capacity = AVAudioFrameCount(Double(folded.count) * ratio) + 64
+        guard capacity > 0, let out = AVAudioPCMBuffer(pcmFormat: Self.target, frameCapacity: capacity) else { return }
+
+        var fed = false
+        var error: NSError?
+        converter.convert(to: out, error: &error) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true; status.pointee = .haveData; return source
+        }
+        guard error == nil, out.frameLength > 0, let ch = out.floatChannelData?[0] else { return }
+        let chunk = Array(UnsafeBufferPointer(start: ch, count: Int(out.frameLength)))
+
+        lock.lock()
+        self.buffer.append(contentsOf: chunk)
+        var sum: Float = 0; for v in chunk { sum += v * v }
+        let rms = chunk.isEmpty ? 0 : (sum / Float(chunk.count)).squareRoot()
+        energy.append(min(1, rms * 14))          // rough 0…1 level for the meters
+        if energy.count > 16 { energy.removeFirst(energy.count - 16) }
+        lock.unlock()
+
+        onSamples?(chunk)
     }
 
     func stop() {
-        processor.stopRecording()
+        if tapped {
+            _ = zvonCatchNSException { self.engine.inputNode.removeTap(onBus: 0) }
+            tapped = false
+        }
+        if engine.isRunning { engine.stop() }
+        converter = nil
+        monoFormat = nil
     }
 
     func snapshotSamples() -> [Float] {
