@@ -504,6 +504,32 @@ struct MeetingView: View {
         Section(L("Расшифровка", "Transcript")) {
             Button(L("Копировать сырую расшифровку", "Copy raw transcript")) { copyRawTranscript(of: s) }
             Button(L("Сохранить .txt…", "Save .txt…")) { saveRawTranscript(of: s) }
+            if MeetingAudioRecorder.hasAudio(sessionId: s.id) {
+                Button(L("Сохранить аудио…", "Save audio…")) { saveAudio(of: s) }
+                Button(L("Показать аудио в Finder", "Reveal audio in Finder")) {
+                    NSWorkspace.shared.activateFileViewerSelecting([MeetingAudioRecorder.url(sessionId: s.id)])
+                }
+            }
+        }
+    }
+
+    /// Copy the meeting's track out of the app's private storage. It lives under Application
+    /// Support named by session id, which is fine for the app and useless to a person who wants
+    /// the recording — hand it over with the meeting's own name on it.
+    private func saveAudio(of s: SessionRecord) {
+        let source = MeetingAudioRecorder.url(sessionId: s.id)
+        guard FileManager.default.fileExists(atPath: source.path) else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(s.title).m4a"
+        panel.allowedContentTypes = [.mpeg4Audio]
+        panel.message = L("Стерео: слева вы, справа собеседник",
+                          "Stereo: you on the left, the other party on the right")
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        do {
+            try? FileManager.default.removeItem(at: target)     // the panel already confirmed overwrite
+            try FileManager.default.copyItem(at: source, to: target)
+        } catch {
+            DebugLog.log("save audio failed: \(error.localizedDescription)")
         }
     }
 
@@ -1750,11 +1776,35 @@ struct AudioPlayerBar: View {
             Text("\(clock(position)) / \(clock(duration))")
                 .font(PFont.monoSecondary).foregroundStyle(Color.pInk3)
                 .monospacedDigit().fixedSize()
+
+            Button { saveAudio() } label: {
+                Image(systemName: "square.and.arrow.down").font(.system(size: 11))
+                    .foregroundStyle(Color.pInk2)
+                    .frame(width: 26, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("Сохранить аудио встречи", "Save the meeting audio"))
+            .accessibilityLabel(L("Сохранить аудио", "Save audio"))
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Color.pCard).clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.pLine, lineWidth: 1))
         .onAppear { _ = audio.load(sessionId: sessionId) }
+    }
+
+    private func saveAudio() {
+        let source = MeetingAudioRecorder.url(sessionId: sessionId)
+        guard FileManager.default.fileExists(atPath: source.path) else { return }
+        let title = SessionStore.shared.sessions.first { $0.id == sessionId }?.title ?? "meeting"
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(title).m4a"
+        panel.allowedContentTypes = [.mpeg4Audio]
+        panel.message = L("Стерео: слева вы, справа собеседник",
+                          "Stereo: you on the left, the other party on the right")
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        try? FileManager.default.removeItem(at: target)
+        try? FileManager.default.copyItem(at: source, to: target)
     }
 }
 
