@@ -327,11 +327,36 @@ final class TranscriptStore: ObservableObject {
     /// STEM match, not exact phrases — the ASR spells the verb many ways («создай/создая/создать
     /// задачу»), so we key on the noun stem «задач» (explicit) and reminder stems (soft), not the verb.
     private static let taskStems = ["задач"]                 // задача/задачу/задачи/задаче…
-    private static let reminderStems = ["напомн", "не забуд"] // напомни/напомнить, не забудь/забыть
+    /// IMPERATIVE forms only, matched as whole words. The old stem «напомн» also caught
+    /// «напоминает», «напомнил», «напоминаю» — narration, not instruction — and every one of those
+    /// went to the LLM, which sometimes agreed it was a task. That is the "reacts with no keywords
+    /// at all" complaint: the keyword was there, inside an ordinary verb.
+    private static let reminderWords: Set<String> = ["напомни", "напомните", "напомнить"]
+    private static let reminderPhrases = ["не забудь", "не забудьте", "не забыть"]
 
-    /// Cheap pre-filter: a task-word or reminder stem is present (LLM then confirms via `parseTask`).
+    /// Words, lowercased and stripped of punctuation — matching runs on whole words, never on
+    /// substrings of them.
+    private static func words(_ text: String) -> [String] {
+        let strip = CharacterSet(charactersIn: ",.:;!?«»\"—-()")
+        return text.lowercased()
+            .split(whereSeparator: { " \n\t".contains($0) })
+            .map { $0.trimmingCharacters(in: strip) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Cheap pre-filter: something task-shaped is present (the LLM then confirms via `parseTask`).
     /// A question is never a command ("напомни, когда встреча?").
-    func taskCommand(_ text: String) -> String? { Self.remainderAfterStem(text, Self.taskStems + Self.reminderStems) }
+    func taskCommand(_ text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.hasSuffix("?") else { return nil }
+        let w = Self.words(trimmed)
+        let low = trimmed.lowercased()
+        let hasNoun = w.contains { $0.hasPrefix("задач") }
+        let hasReminder = w.contains { Self.reminderWords.contains($0) }
+            || Self.reminderPhrases.contains { low.contains($0) }
+        guard hasNoun || hasReminder else { return nil }
+        return Self.remainderAfterStem(trimmed, Self.taskStems + ["напомни", "не забуд"]) ?? trimmed
+    }
     /// Imperative task verbs — «создай / сделай / поставь / добавь / запиши / составь / заведи …».
     private static let taskVerbStems = ["созда", "сдела", "постав", "добав", "запиш", "состав",
                                         "завед", "оформ", "сформулир", "заплан", "назнач"]
@@ -343,19 +368,26 @@ final class TranscriptStore: ObservableObject {
     func explicitTaskCommand(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.hasSuffix("?") else { return nil }
-        let strip = CharacterSet(charactersIn: " ,.:;!?«»\"—-")
-        let words = trimmed.split(whereSeparator: { " \n\t".contains($0) })
-            .map { $0.lowercased().trimmingCharacters(in: strip) }
-        guard words.count >= 2 else { return nil }
+        let w = Self.words(trimmed)
+        guard w.count >= 2 else { return nil }
         // «Задача: …» — the noun leads and a colon introduces the task.
-        if words[0].hasPrefix("задач"), let colon = trimmed.firstIndex(of: ":") {
+        if w[0].hasPrefix("задач"), let colon = trimmed.firstIndex(of: ":") {
             let after = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
             return after.isEmpty ? nil : after
         }
-        // Verb-led: word 0 is a task verb AND «задач…» is one of the first three words.
-        guard Self.taskVerbStems.contains(where: { words[0].hasPrefix($0) }),
-              words.prefix(3).contains(where: { $0.hasPrefix("задач") }) else { return nil }
-        return Self.remainderAfterStem(trimmed, ["задач"])   // original-cased text after the «задач…» word
+        // The command is a SHAPE — a task verb with «задач…» right behind it — and it is recognised
+        // wherever it sits. Requiring the verb to be the very first word meant «Слушай, создай
+        // задачу…» and «Кстати, поставь задачу…» were not commands, which is how speaking naturally
+        // lost the task. Two words of slack covers «поставь Пете задачу».
+        for i in w.indices where Self.taskVerbStems.contains(where: { w[i].hasPrefix($0) }) {
+            let window = w[(i + 1)..<min(i + 3, w.count)]
+            if window.contains(where: { $0.hasPrefix("задач") }) {
+                // The remainder is taken from the first «задач…» in the sentence; with the verb
+                // directly in front of it, that is the one just matched.
+                return Self.remainderAfterStem(trimmed, ["задач"])
+            }
+        }
+        return nil
     }
 
     /// Voice-command verbs — «открой/запусти/включи …». Keyed on stems so the Russian ASR's many
