@@ -326,13 +326,19 @@ final class TranscriptStore: ObservableObject {
     /// extraction with deterministic "I said it → it exists" feedback. Meetings only.
     /// STEM match, not exact phrases — the ASR spells the verb many ways («создай/создая/создать
     /// задачу»), so we key on the noun stem «задач» (explicit) and reminder stems (soft), not the verb.
-    private static let taskStems = ["задач"]                 // задача/задачу/задачи/задаче…
-    /// IMPERATIVE forms only, matched as whole words. The old stem «напомн» also caught
-    /// «напоминает», «напомнил», «напоминаю» — narration, not instruction — and every one of those
-    /// went to the LLM, which sometimes agreed it was a task. That is the "reacts with no keywords
-    /// at all" complaint: the keyword was there, inside an ordinary verb.
-    private static let reminderWords: Set<String> = ["напомни", "напомните", "напомнить"]
-    private static let reminderPhrases = ["не забудь", "не забудьте", "не забыть"]
+    /// The ONLY way to create a task by voice: the utterance OPENS with an imperative task verb
+    /// and «задач…» as the very next word. Nothing else counts.
+    ///
+    /// Everything looser was tried and produced garbage. Matching the verb STEM also caught nouns —
+    /// «создание задачи», «заведение задачи» — and looking anywhere in the sentence turned every
+    /// passing mention into a command, so «просто запихнуть всё в одну функцию создания задачи»
+    /// filed a task called «Там будет и проверка, и создание». Whole imperative words, first
+    /// position, no exceptions: a rule that can be held in the head and trusted.
+    private static let taskImperatives: Set<String> = [
+        "создай", "создайте", "заведи", "заведите", "поставь", "поставьте",
+        "запиши", "запишите", "добавь", "добавьте", "сделай", "сделайте",
+        "оформи", "оформите", "запланируй", "запланируйте", "назначь", "назначьте",
+    ]
 
     /// Words, lowercased and stripped of punctuation — matching runs on whole words, never on
     /// substrings of them.
@@ -344,50 +350,36 @@ final class TranscriptStore: ObservableObject {
             .filter { !$0.isEmpty }
     }
 
-    /// Cheap pre-filter: something task-shaped is present (the LLM then confirms via `parseTask`).
-    /// A question is never a command ("напомни, когда встреча?").
-    func taskCommand(_ text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.hasSuffix("?") else { return nil }
-        let w = Self.words(trimmed)
-        let low = trimmed.lowercased()
-        let hasNoun = w.contains { $0.hasPrefix("задач") }
-        let hasReminder = w.contains { Self.reminderWords.contains($0) }
-            || Self.reminderPhrases.contains { low.contains($0) }
-        guard hasNoun || hasReminder else { return nil }
-        return Self.remainderAfterStem(trimmed, Self.taskStems + ["напомни", "не забуд"]) ?? trimmed
-    }
-    /// Imperative task verbs — «создай / сделай / поставь / добавь / запиши / составь / заведи …».
-    private static let taskVerbStems = ["созда", "сдела", "постав", "добав", "запиш", "состав",
-                                        "завед", "оформ", "сформулир", "заплан", "назнач"]
+    /// With one rule left, the cheap pre-filter and the command test ask the same question.
+    func taskCommand(_ text: String) -> String? { explicitTaskCommand(text) }
 
-    /// An EXPLICIT task command — the ONLY form allowed to bypass the LLM veto. Requires a command
-    /// structure: an imperative task-verb at the START + the noun «задач…» within the first few words,
-    /// OR the «Задача: …» colon form. A bare mention of «задача» mid-sentence («у задач агентов»,
-    /// «работа с задачами») is NOT a command and returns nil (→ the LLM gate decides).
+    /// «Создай задачу …» and nothing else.
     func explicitTaskCommand(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.hasSuffix("?") else { return nil }
+        guard !trimmed.hasSuffix("?") else { return nil }          // a question is never a command
         let w = Self.words(trimmed)
-        guard w.count >= 2 else { return nil }
-        // «Задача: …» — the noun leads and a colon introduces the task.
-        if w[0].hasPrefix("задач"), let colon = trimmed.firstIndex(of: ":") {
-            let after = String(trimmed[trimmed.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            return after.isEmpty ? nil : after
-        }
-        // The command is a SHAPE — a task verb with «задач…» right behind it — and it is recognised
-        // wherever it sits. Requiring the verb to be the very first word meant «Слушай, создай
-        // задачу…» and «Кстати, поставь задачу…» were not commands, which is how speaking naturally
-        // lost the task. Two words of slack covers «поставь Пете задачу».
-        for i in w.indices where Self.taskVerbStems.contains(where: { w[i].hasPrefix($0) }) {
-            let window = w[(i + 1)..<min(i + 3, w.count)]
-            if window.contains(where: { $0.hasPrefix("задач") }) {
-                // The remainder is taken from the first «задач…» in the sentence; with the verb
-                // directly in front of it, that is the one just matched.
-                return Self.remainderAfterStem(trimmed, ["задач"])
+        guard w.count >= 3,                                        // verb + «задачу» + something to do
+              Self.taskImperatives.contains(w[0]),
+              w[1].hasPrefix("задач") else { return nil }
+        return Self.remainderAfterWords(trimmed, skipping: 2)
+    }
+
+    /// The original text after the first `skipping` words, casing intact.
+    private static func remainderAfterWords(_ text: String, skipping: Int) -> String? {
+        var seen = 0, inWord = false
+        var idx = text.startIndex
+        while idx < text.endIndex {
+            let isSpace = " \n\t".contains(text[idx])
+            if !isSpace, !inWord { inWord = true }
+            if isSpace, inWord {
+                inWord = false
+                seen += 1
+                if seen == skipping { break }
             }
+            idx = text.index(after: idx)
         }
-        return nil
+        let rest = String(text[idx...]).trimmingCharacters(in: CharacterSet(charactersIn: " :—-,.\t\n"))
+        return rest.isEmpty ? nil : rest
     }
 
     /// Voice-command verbs — «открой/запусти/включи …». Keyed on stems so the Russian ASR's many
@@ -461,20 +453,10 @@ final class TranscriptStore: ObservableObject {
             refineTaskOwnerDue(created.id, command: text, cfg: cfg)
             return
         }
-        // SOFT trigger («напомни/не забудь») or a bare «задач» mention — genuinely ambiguous, so the
-        // LLM decides. No LLM → don't guess (avoids false tasks from «у задач агентов» etc.).
-        guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        let context = transcriptText()
-        let command = text
-        Task { [weak self] in
-            let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
-                .parseTask(command: command, context: context)   // nil = a question / message → not a task
-            guard let self, let item else { return }
-            let clean = GlossaryStore.shared.correct(item.text.trimmingCharacters(in: .whitespaces))
-            guard !clean.isEmpty, let created = TaskStore.shared.addVoice(clean, sessionId: session) else { return }
-            TaskStore.shared.edit(created.id) { $0.owner = item.ownerClean; $0.due = item.dueClean }
-        }
+        // There is no second path. A soft trigger used to be handed to the LLM to adjudicate,
+        // and that is where the false tasks came from: asked "is this a task?" about ordinary talk
+        // containing «напомни» or «задача», it agreed often enough to fill the list with noise.
+        // If the utterance did not open with the command, nothing happens.
     }
 
     /// Best-effort async refine of an explicit voice task's owner/due via the LLM. Never removes the
@@ -1297,34 +1279,9 @@ final class TranscriptStore: ObservableObject {
                 }
                 return
             }
-            // SOFT trigger only («напомни / не забудь») — genuinely ambiguous, so the LLM decides.
-            if !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty {
-                dictationProcessing = true
-                let command = text
-                DebugLog.log("dictation reminder-gate start")
-                Task { [weak self] in
-                    let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                        style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
-                        .parseTask(command: command, context: command)
-                    guard let self else { return }
-                    self.dictationProcessing = false
-                    if let item {            // the reminder IS a task
-                        let clean = GlossaryStore.shared.correct(item.text.trimmingCharacters(in: .whitespaces))
-                        if !clean.isEmpty, let created = TaskStore.shared.addVoice(clean, sessionId: nil) {
-                            TaskStore.shared.edit(created.id) { $0.owner = item.ownerClean; $0.due = item.dueClean }
-                        }
-                        self.showTaskCreated(clean)
-                        DebugLog.log("dictation → reminder task: \(clean)")
-                    } else {                 // a question / message that merely contains «напомни» → insert
-                        DebugLog.log("dictation reminder-gate: not a task → insert")
-                        self.finishInsert(command)
-                    }
-                }
-                return
-            }
-            // Soft trigger but no LLM to disambiguate («напомни, когда встреча?» vs a real reminder)
-            // → don't guess; insert as normal dictation. Explicit «…задачу» was already handled above.
-            DebugLog.log("dictation soft-trigger, no LLM → insert")
+            // No soft path here either: a dictation that merely mentions a task is just text,
+            // and asking the model to judge it produced tasks nobody asked for. It goes in as
+            // dictation like anything else.
             finishInsert(text)
             return
         }
