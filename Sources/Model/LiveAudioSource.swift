@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 import WhisperKit
 
@@ -81,14 +82,46 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
                                    userInfo: [NSLocalizedDescriptionKey: "Микрофон недоступен"])
     }
 
+    /// The default input device, straight from the HAL. `nil` when the system has none (headset
+    /// just unplugged, device mid-switch).
+    ///
+    /// Asked of CoreAudio rather than of an `AVAudioEngine`: a throwaway engine's `inputNode`
+    /// dereferences an audio unit that does not exist yet while the device is changing, and that is
+    /// a SIGSEGV in `AVAudioIONodeImpl::AUI()` — not an exception, so nothing can catch it.
+    private static func defaultInputDevice() -> AudioObjectID? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var device = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        let status = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device)
+        return status == noErr && device != kAudioObjectUnknown ? device : nil
+    }
+
     /// The input as CoreAudio sees it right now — logged on failure, because "Failed to create node
     /// format" on its own never said which device was wrong or what it claimed to be.
     private static func inputDescription() -> String {
-        let f = AVAudioEngine().inputNode.inputFormat(forBus: 0)
-        return "input \(Int(f.sampleRate)) Hz \(f.channelCount) ch"
+        guard let device = defaultInputDevice() else { return "no input device" }
+        var address = AudioObjectPropertyAddress(mSelector: kAudioObjectPropertyName,
+                                                 mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var name: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let named = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &name) == noErr
+        address.mSelector = kAudioDevicePropertyNominalSampleRate
+        var rate: Float64 = 0
+        size = UInt32(MemoryLayout<Float64>.size)
+        let rated = AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate) == noErr
+        let label = named ? (name?.takeRetainedValue() as String?) ?? "?" : "?"
+        return "input \"\(label)\" \(rated ? "\(Int(rate)) Hz" : "rate unknown")"
     }
 
     private func startOnce() throws {
+        // Do not touch the engine's input node with no device behind it — see defaultInputDevice().
+        guard Self.defaultInputDevice() != nil else {
+            throw NSError(domain: "ZVON", code: -4, userInfo: [NSLocalizedDescriptionKey:
+                "Микрофон недоступен — нет устройства ввода."])
+        }
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
         chosenChannel = nil; channelEnergy = []; probedFrames = 0; buffersSeen = 0
 
