@@ -211,8 +211,8 @@ struct ParleySettingsView: View {
     private var sttTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
             head(L("Речь", "Speech"), L("Распознавание речи — на устройстве.", "Speech recognition — on device."))
-            group(footnote: L("Parakeet TDT v3 (NVIDIA, через FluidAudio) — точный русский на устройстве, ~реалтайм на Apple Silicon (Neural Engine). Модель подгружается автоматически; аудио не покидает Mac.", "Parakeet TDT v3 (NVIDIA, via FluidAudio) — accurate on-device Russian, near real-time on Apple Silicon (Neural Engine). The model downloads automatically; audio never leaves your Mac.")) {
-                PRow(L("Движок", "Engine")) { Text("Parakeet TDT v3").font(PFont.secondary).foregroundStyle(Color.pInk1) }
+            group(footnote: L("Parakeet Ultra (NVIDIA, через FluidAudio) — точный русский на устройстве, ~реалтайм на Apple Silicon (Neural Engine). Модель подгружается автоматически; аудио не покидает Mac.", "Parakeet Ultra (NVIDIA, via FluidAudio) — accurate on-device Russian, near real-time on Apple Silicon (Neural Engine). The model downloads automatically; audio never leaves your Mac.")) {
+                PRow(L("Движок", "Engine")) { Text("Parakeet Ultra").font(PFont.secondary).foregroundStyle(Color.pInk1) }
                 PDivider()
                 PRow(L("Язык распознавания", "Recognition language")) {
                     Picker("", selection: $store.language) {
