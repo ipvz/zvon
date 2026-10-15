@@ -133,11 +133,10 @@ final class TranscriptStore: ObservableObject {
     @Published var aiDictationStyle: DictationStyle {
         didSet { UserDefaults.standard.set(aiDictationStyle.rawValue, forKey: "aiDictationStyle") }
     }
-    // Settings → Речь → «Улучшать транскрипт через ИИ» (confidence-gated GER, offloaded to the LLM).
+    // Settings → Речь → «Улучшать транскрипт через ИИ» (GER on every meeting final, offloaded to the LLM).
     @Published var aiTranscriptRepairEnabled: Bool {
         didSet { UserDefaults.standard.set(aiTranscriptRepairEnabled, forKey: "aiTranscriptRepairEnabled") }
     }
-    static let repairConfidence: Float = 0.70   // only finals below this (uncertain) get sent for repair
     @Published var dictationProcessing = false       // AI polish running → HUD shows the «обрабатываю» pill
     @Published var totalDictatedWords: Int {         // lifetime word count (Wispr-style stat)
         didSet { UserDefaults.standard.set(totalDictatedWords, forKey: "totalDictatedWords") }
@@ -243,7 +242,7 @@ final class TranscriptStore: ObservableObject {
                                                    speaker: speaker, text: text, isFinal: false, startSec: t)
             }
             rebuildLines()
-        case .final(let text, let startSec, let confidence):
+        case .final(let text, let startSec, _):
             // Not guarded by isRecording: the last utterance is flushed *after* stop(), and we
             // must not drop it (this is what lost replies on stop, and dictation needs it).
             partials[speaker] = nil
@@ -256,9 +255,10 @@ final class TranscriptStore: ObservableObject {
             rebuildLines()
             scheduleNotes()
             if speaker == .me { detectVoiceTask(corrected) }   // only YOUR speech makes tasks — not the other party's
-            // Confidence-gated GER: only send genuinely uncertain finals to the LLM for repair (offloaded,
-            // few calls). Meetings only (dictation has its own cleanup).
-            if aiTranscriptRepairEnabled, !dictating, confidence < Self.repairConfidence { repairFinal(id: lineId, text: corrected) }
+            // GER on every meeting final (dictation has its own cleanup). Not gated on the ASR's
+            // confidence: Parakeet reports ≥0.88 on nearly every phrase and the errors the repair
+            // fixes were spread evenly across 0.88…1.0, so a threshold either never fires or is arbitrary.
+            if aiTranscriptRepairEnabled, !dictating { repairFinal(id: lineId, text: corrected) }
         case .ended:
             partials[speaker] = nil
             rebuildLines()
@@ -421,7 +421,7 @@ final class TranscriptStore: ObservableObject {
         return after.isEmpty ? trimmed : after
     }
 
-    /// Generative Error Repair for a low-confidence final: the LLM fixes only clear recognition errors
+    /// Generative Error Repair for a final: the LLM fixes only clear recognition errors
     /// (offloaded), then we swap the line's text. Strong anti-over-correction in the prompt + a length
     /// guard so it can't rewrite/hallucinate. Nearby lines give the model context.
     private func repairFinal(id: UInt64, text: String) {

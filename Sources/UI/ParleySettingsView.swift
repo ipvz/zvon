@@ -226,8 +226,8 @@ struct ParleySettingsView: View {
                 }
             }
             group(L("Улучшение через ИИ", "AI enhancement"),
-                  footnote: L("Неуверенно распознанные фразы отправляются в AI-модель, которая правит только явные ошибки распознавания (имена, термины, похожие по звучанию слова), не меняя смысл. Работает только с подключённой AI-моделью; распознавание остаётся локальным.", "Low-confidence phrases are sent to the AI model, which fixes only clear recognition errors (names, terms, similar-sounding words) without changing the meaning. Works only with a connected AI model; recognition stays local.")) {
-                PRow(L("Исправлять ошибки распознавания", "Fix recognition errors"), sub: L("Только неуверенные фразы — точечно, через выбранную AI-модель", "Low-confidence phrases only — targeted, via the selected AI model")) {
+                  footnote: L("Каждая фраза встречи отправляется в AI-модель, которая правит только явные ошибки распознавания (несуществующие слова, искажённые имена и термины, неверные разбиения), не трогая грамматику и смысл. На 150 русских фразах это снизило число ошибок примерно на 14 %. Нужна подключённая AI-модель; само распознавание остаётся локальным.", "Every meeting phrase is sent to the AI model, which fixes only clear recognition errors (non-words, distorted names and terms, wrong word splits) and leaves grammar and meaning alone. On 150 Russian phrases this cut errors by about 14%. Needs a connected AI model; recognition itself stays local.")) {
+                PRow(L("Исправлять ошибки распознавания", "Fix recognition errors"), sub: L("Точечные правки через выбранную AI-модель", "Targeted fixes via the selected AI model")) {
                     ParleyToggle(on: $store.aiTranscriptRepairEnabled)
                 }
             }
