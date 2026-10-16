@@ -38,12 +38,15 @@ enum TextInserter {
         // No editable field (or no Accessibility to check) → report false so the caller shows the
         // card. The clipboard stays as the user left it: overwriting it here with nothing to
         // restore it later is how a copied snippet got replaced by the last dictation.
-        guard canAutoPaste, hasEditableFocus() else { return false }
+        guard canAutoPaste, shouldPaste() else { return false }
         // Editable field → paste at the caret WITHOUT clobbering the user's clipboard: snapshot it,
         // put our text, ⌘V, then restore the snapshot. (Same as Wispr Flow — clipboard stays intact.)
         pendingPaste?.cancel()                           // a newer dictation supersedes an unsent ⌘V
         pendingRestore?.cancel()                         // …and its pending restore
-        if savedOriginal == nil { savedOriginal = snapshot() }   // capture the user's clipboard only once per cycle
+        if savedOriginal == nil {                         // capture the user's clipboard only once per cycle
+            savedOriginal = snapshot()
+            DebugLog.log("insert: saved clipboard (\(savedOriginal?.count ?? 0) items)")
+        }
         ourChangeCount = writeConcealed(trimmed)
 
         let pasteWork = DispatchWorkItem {
@@ -76,6 +79,7 @@ enum TextInserter {
                 return
             }
             restore(savedOriginal ?? [])
+            DebugLog.log("insert: clipboard restored (\(savedOriginal?.count ?? 0) items)")
         }
         pendingRestore = work
         DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: work)
@@ -114,19 +118,20 @@ enum TextInserter {
         "AXSearchField",
     ]
 
-    /// True if the focused UI element is somewhere a caret can live.
+    /// Whether to send ⌘V: yes unless focus is positively somewhere text cannot go.
     ///
-    /// Deliberately generous. A false negative breaks dictation for the user every single time —
-    /// the caret is blinking in a real field and we refuse to paste — while a false positive costs
-    /// at most a ⌘V that the frontmost app ignores. The old test asked only for three AX roles or a
-    /// settable value, which misses most of the places people actually type: Electron and Chromium
-    /// surfaces (Slack, VS Code, Notion, every web input) expose a generic group, or expose nothing
-    /// at all until accessibility is switched on for them explicitly.
-    static func hasEditableFocus() -> Bool {
+    /// The log shows what the old "is this an editable field?" test did in practice: of ~430
+    /// refusals, 405 were "no focused AX element" — Electron, Telegram, web apps and anything else
+    /// whose accessibility tree is empty or lags behind the caret — and the rest were web areas,
+    /// groups and windows that host a perfectly good caret. In every one of those the user was typing
+    /// into a field and got a "select a field first" card instead of their text. A wrong refusal
+    /// costs the dictation every time; a wrong ⌘V costs a keystroke the frontmost app ignores. So
+    /// only a focus that is clearly a button, label, checkbox and the like is refused.
+    static func shouldPaste() -> Bool {
         guard AXIsProcessTrusted() else { return false }
         guard let element = focusedElement() else {
-            DebugLog.log("insert: no focused AX element")
-            return false
+            DebugLog.log("insert: no focused AX element — pasting anyway")
+            return true
         }
         if isEditable(element) { return true }
         // contenteditable and rich composers report the caret on an ancestor, not on the focused node.
@@ -136,9 +141,22 @@ enum TextInserter {
             if isEditable(parent) { return true }
             current = parent
         }
-        DebugLog.log("insert: focus not editable (role=\(role(of: element) ?? "nil"))")
-        return false
+        let r = role(of: element)
+        if let r, notTextRoles.contains(r) {
+            DebugLog.log("insert: focus is not a text target (role=\(r))")
+            return false
+        }
+        DebugLog.log("insert: focus role unclear (role=\(r ?? "nil")) — pasting anyway")
+        return true
     }
+
+    /// Controls a caret can never sit in. Everything else — including roles that merely say nothing,
+    /// like a web area, a group or a window — is given the benefit of the doubt.
+    private static let notTextRoles: Set<String> = [
+        kAXStaticTextRole as String, kAXButtonRole as String, kAXImageRole as String,
+        kAXCheckBoxRole as String, kAXRadioButtonRole as String, kAXSliderRole as String,
+        kAXMenuItemRole as String, kAXMenuBarItemRole as String,
+    ]
 
     /// The focused element, asking the frontmost app directly when the system-wide query comes up
     /// empty — and switching on accessibility for Chromium/Electron hosts, which ship their tree
