@@ -778,7 +778,7 @@ struct NoFieldCard: View {
                 .lineLimit(4).truncationMode(.tail)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 10) {
-                Text(L("Скопировано · закроется через 8с", "Copied · closes in 8s")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
+                Text(L("Буфер не тронут · закроется через 8с", "Clipboard untouched · closes in 8s")).font(.system(size: 11)).foregroundStyle(Color.pInk3)
                 Spacer()
                 HStack(spacing: 7) { Text("⧉").foregroundStyle(Color.pAccent); Text(L("Скопировать", "Copy")) }
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(Color.pInk1)

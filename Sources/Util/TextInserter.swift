@@ -1,8 +1,10 @@
 import AppKit
 import ApplicationServices
 
-/// Inserts dictated text into the frontmost app (Wispr Flow style): always copies to the
-/// clipboard, and — if Accessibility is granted — synthesizes ⌘V to paste at the cursor.
+/// Inserts dictated text into the frontmost app (Wispr Flow style): if Accessibility is granted
+/// and a caret is focused, borrows the clipboard for a ⌘V and gives it back. The user's clipboard is
+/// never left holding dictated text — when there is nowhere to paste, the text goes to the
+/// "no input field" card (which has a Copy button) and the clipboard is not touched at all.
 enum TextInserter {
     /// True if we can synthesize key events (needed for auto-paste).
     static var canAutoPaste: Bool { AXIsProcessTrusted() }
@@ -33,12 +35,10 @@ enum TextInserter {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
 
-        // No editable field (or no Accessibility to check) → leave the text on the clipboard for the
-        // "no input field" card to show/re-copy, and report false so the caller shows it.
-        guard canAutoPaste, hasEditableFocus() else {
-            ourChangeCount = writeConcealed(trimmed)
-            return false
-        }
+        // No editable field (or no Accessibility to check) → report false so the caller shows the
+        // card. The clipboard stays as the user left it: overwriting it here with nothing to
+        // restore it later is how a copied snippet got replaced by the last dictation.
+        guard canAutoPaste, hasEditableFocus() else { return false }
         // Editable field → paste at the caret WITHOUT clobbering the user's clipboard: snapshot it,
         // put our text, ⌘V, then restore the snapshot. (Same as Wispr Flow — clipboard stays intact.)
         pendingPaste?.cancel()                           // a newer dictation supersedes an unsent ⌘V
@@ -55,19 +55,23 @@ enum TextInserter {
                 ourChangeCount = writeConcealed(trimmed)
             }
             paste()
-            scheduleRestore()
+            scheduleRestore(dictated: trimmed)
         }
         pendingPaste = pasteWork
         DispatchQueue.main.asyncAfter(deadline: .now() + pasteDelay, execute: pasteWork)
         return true
     }
 
-    private static func scheduleRestore() {
+    private static func scheduleRestore(dictated: String) {
         let work = DispatchWorkItem {
             defer { savedOriginal = nil; pendingRestore = nil }
-            // Something wrote after us, so the pasteboard now holds content NEWER than our snapshot.
-            // Restoring would throw the user's fresh copy away; leave it alone.
-            guard NSPasteboard.general.changeCount == ourChangeCount else {
+            // Something wrote after us, so the pasteboard may hold content NEWER than our snapshot,
+            // and restoring would throw the user's fresh copy away. But a clipboard manager that
+            // re-writes what it saw also bumps the count while the content is still our dictated
+            // text — leaving that in place would lose the original — so only skip the restore when
+            // the pasteboard holds something other than what we put there.
+            let pb = NSPasteboard.general
+            if pb.changeCount != ourChangeCount, pb.string(forType: .string) != dictated {
                 DebugLog.log("insert: clipboard changed after paste — keeping it, no restore")
                 return
             }
