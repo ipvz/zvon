@@ -1,7 +1,7 @@
 import Foundation
 
 /// A human-readable failure from the LLM endpoint — surfaced in the UI, never swallowed.
-enum LLMError: LocalizedError {
+enum LLMError: LocalizedError, Sendable {
     case badURL
     case http(Int, String?)
     case network(String)
@@ -39,22 +39,20 @@ actor LLMClient {
     private let model: String
     private let apiKey: String?
     private let style: LLMAPIStyle
+    private let session: URLSession
 
-    init(endpoint: String, model: String, apiKey: String?, style: LLMAPIStyle = .openai) {
+    init(endpoint: String, model: String, apiKey: String?, style: LLMAPIStyle = .openai,
+         session: URLSession = .shared) {
         self.endpoint = endpoint
         self.model = model
         self.apiKey = apiKey
         self.style = style
+        self.session = session
     }
 
     private func url(_ path: String) -> URL? {
         let base = endpoint.hasSuffix("/") ? String(endpoint.dropLast()) : endpoint
         return URL(string: base + path)
-    }
-    /// The secret only goes on the wire over https or to loopback (local Ollama) — never cleartext remote.
-    private func secure(_ url: URL) -> Bool {
-        let host = url.host?.lowercased() ?? ""
-        return url.scheme?.lowercased() == "https" || host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 
     /// One chat turn → the assistant's message content. Throws a typed `LLMError` on any failure.
@@ -84,7 +82,9 @@ actor LLMClient {
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey, !apiKey.isEmpty, secure(url) { req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
+        // The endpoint and its key are explicitly configured together by the user, including
+        // HTTP endpoints for self-hosted inference. Never silently turn that into an anonymous call.
+        if let apiKey, !apiKey.isEmpty { req.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization") }
         req.httpBody = payload
         req.timeoutInterval = 45
 
@@ -119,7 +119,7 @@ actor LLMClient {
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        if let apiKey, !apiKey.isEmpty, secure(url) { req.setValue(apiKey, forHTTPHeaderField: "x-api-key") }
+        if let apiKey, !apiKey.isEmpty { req.setValue(apiKey, forHTTPHeaderField: "x-api-key") }
         req.httpBody = payload
         req.timeoutInterval = 45
 
@@ -137,15 +137,21 @@ actor LLMClient {
     private func send(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
         var lastError: Error = LLMError.emptyResponse
         for attempt in 0..<3 {
-            if attempt > 0 { try? await Task.sleep(nanoseconds: UInt64(attempt) * 400_000_000) }
+            try Task.checkCancellation()
+            if attempt > 0 { try await Task.sleep(nanoseconds: UInt64(attempt) * 400_000_000) }
             do {
-                let (data, resp) = try await URLSession.shared.data(for: req)
+                let (data, resp) = try await session.data(for: req)
                 guard let http = resp as? HTTPURLResponse else { throw LLMError.emptyResponse }
                 if (500...599).contains(http.statusCode), attempt < 2 {
                     lastError = LLMError.http(http.statusCode, String(data: data, encoding: .utf8)); continue
                 }
                 return (data, http)
             } catch {
+                // URLSession commonly reports cancellation as URLError.cancelled, not
+                // CancellationError. Neither form should start another network request.
+                if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled {
+                    throw CancellationError()
+                }
                 lastError = LLMError.network(error.localizedDescription)
             }
         }

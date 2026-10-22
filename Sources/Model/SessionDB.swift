@@ -43,7 +43,7 @@ final class SessionDB {
         return sqlite3_step(s) == SQLITE_ROW ? sqlite3_column_int64(s, 0) == 0 : true
     }
 
-    func insert(_ r: SessionRecord) {
+    func insert(_ r: SessionRecord) throws {
         let sql = """
             INSERT OR REPLACE INTO sessions
             (id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics,userNotes)
@@ -51,7 +51,7 @@ final class SessionDB {
         """
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
-        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { throw failure() }
         bind(s, 1, r.id.uuidString)
         bind(s, 2, r.kind.rawValue)
         bind(s, 3, r.title)
@@ -63,25 +63,27 @@ final class SessionDB {
         bindOpt(s, 9, jsonArray(r.noteDecisions))
         bindOpt(s, 10, jsonArray(r.noteTopics))
         bindOpt(s, 11, r.userNotes)
-        sqlite3_step(s)
+        guard sqlite3_step(s) == SQLITE_DONE else { throw failure() }
     }
 
-    func delete(_ id: UUID) {
+    func delete(_ id: UUID) throws {
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
-        guard sqlite3_prepare_v2(db, "DELETE FROM sessions WHERE id=?;", -1, &s, nil) == SQLITE_OK else { return }
+        guard sqlite3_prepare_v2(db, "DELETE FROM sessions WHERE id=?;", -1, &s, nil) == SQLITE_OK else { throw failure() }
         bind(s, 1, id.uuidString)
-        sqlite3_step(s)
+        guard sqlite3_step(s) == SQLITE_DONE else { throw failure() }
     }
 
     /// Every record, newest first — mirrors the old in-memory ordering.
-    func all() -> [SessionRecord] {
+    func all() throws -> [SessionRecord] {
         var out: [SessionRecord] = []
         let sql = "SELECT id,kind,title,date,duration,hasSummary,transcript,noteSummary,noteDecisions,noteTopics,userNotes FROM sessions ORDER BY date DESC;"
         var s: OpaquePointer?
         defer { sqlite3_finalize(s) }
-        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { return out }
-        while sqlite3_step(s) == SQLITE_ROW {
+        guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK else { throw failure() }
+        var step = sqlite3_step(s)
+        while step == SQLITE_ROW {
+            defer { step = sqlite3_step(s) }
             guard let idStr = text(s, 0), let id = UUID(uuidString: idStr),
                   let kindStr = text(s, 1), let kind = SessionRecord.Kind(rawValue: kindStr) else { continue }
             var r = SessionRecord(id: id, kind: kind, title: text(s, 2) ?? "",
@@ -95,7 +97,13 @@ final class SessionDB {
             r.userNotes = text(s, 10)
             out.append(r)
         }
+        guard step == SQLITE_DONE else { throw failure() }
         return out
+    }
+
+    private func failure() -> NSError {
+        NSError(domain: "ZVON.History", code: Int(sqlite3_errcode(db)),
+                userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(db))])
     }
 
     // MARK: - helpers

@@ -132,11 +132,15 @@ struct MeetingView: View {
                 }
             }
         }
-        .alert(L("Не удалось транскрибировать", "Could not transcribe"),
-               isPresented: Binding(get: { importer.error != nil }, set: { if !$0 { importer.error = nil } })) {
-            Button("OK", role: .cancel) { importer.error = nil }
+        .alert(sessions.persistenceError != nil ? L("Ошибка сохранения", "Could not save") : L("Не удалось транскрибировать", "Could not transcribe"),
+               isPresented: Binding(get: { importer.error != nil || sessions.persistenceError != nil },
+                                    set: { if !$0 { importer.error = nil; sessions.persistenceError = nil } })) {
+            if sessions.persistenceError != nil {
+                Button(L("Повторить сохранение", "Retry saving")) { sessions.retrySaving() }
+            }
+            Button("OK", role: .cancel) { importer.error = nil; sessions.persistenceError = nil }
         } message: {
-            Text(importer.error ?? "")
+            Text(sessions.persistenceError ?? importer.error ?? "")
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: store.suggestedMeeting?.key)
         .overlay(alignment: .bottom) {

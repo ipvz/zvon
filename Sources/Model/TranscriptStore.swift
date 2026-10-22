@@ -137,6 +137,8 @@ final class TranscriptStore: ObservableObject {
     @Published var aiTranscriptRepairEnabled: Bool {
         didSet { UserDefaults.standard.set(aiTranscriptRepairEnabled, forKey: "aiTranscriptRepairEnabled") }
     }
+    @Published var dictationError: String?
+    private var blockedDictationConfig: LLMConfig?
     @Published var dictationProcessing = false       // AI polish running → HUD shows the «обрабатываю» pill
     @Published var totalDictatedWords: Int {         // lifetime word count (Wispr-style stat)
         didSet { UserDefaults.standard.set(totalDictatedWords, forKey: "totalDictatedWords") }
@@ -147,6 +149,7 @@ final class TranscriptStore: ObservableObject {
 
     private var pipeline: SpeechPipeline!
     private var runTask: Task<Void, Never>?
+    private var captureSession: CaptureSession?
     private var prepareTask: Task<Void, Never>?
     private var stopping = false               // a stop was requested → finalize on stream end
     private var pendingSegmentAdvance: Double = 0   // paused segment's duration, applied on resume
@@ -188,10 +191,10 @@ final class TranscriptStore: ObservableObject {
 
         pipeline = SpeechPipeline(
             onStatus: { [weak self] status in
-                Task { @MainActor in self?.applyStatus(status) }
+                await self?.applyStatus(status)
             },
             onEvent: { [weak self] speaker, event in
-                Task { @MainActor in self?.handleEvent(speaker, event) }
+                await self?.handleEvent(speaker, event)
             }
         )
 
@@ -828,6 +831,8 @@ final class TranscriptStore: ObservableObject {
     // MARK: - Connection test (Settings)
 
     func testLLM() {
+        blockedDictationConfig = nil
+        dictationError = nil
         llmTest = "…"
         let cfg = llmConfig()
         Task { [weak self] in
@@ -969,6 +974,8 @@ final class TranscriptStore: ObservableObject {
     private var startAfterDictation = false   // record pressed during a dictation → start a meeting once it ends
 
     func start() {
+        // The previous session still owns its transcript until the tail has drained.
+        guard !stopping else { return }
         if isRecording {
             // Record pressed while a DICTATION is active/stuck (its key-release can be missed, e.g. an
             // accidental modifier trigger during typing — then it never stops and holds isRecording, so
@@ -991,12 +998,21 @@ final class TranscriptStore: ObservableObject {
     private func launchRunTask(reset: Bool) {
         let prior = runTask
         let dict = dictating            // capture THIS session's mode (a prior finalize may clear it)
+        let session = CaptureSession()
+        captureSession = session
         runTask = Task { [weak self] in
             _ = await prior?.value      // drain the previous session fully (tail flush + finalize)
-            guard let self, self.isRecording, !self.isPaused else { return }
+            guard let self else { return }
+            if reset { self.resetSessionState() }
+            guard !session.isStopped else {
+                return
+            }
+            if !reset {
+                self.segmentBaseSec += self.pendingSegmentAdvance
+                self.pendingSegmentAdvance = 0
+            }
             self.dictating = dict
             self.isDictating = dict
-            if reset { self.resetSessionState() }
             if let pm = self.pendingMeeting {           // «Записать» on the radar banner — use that exact event
                 self.pendingMeeting = nil
                 self.meetingTitle = pm.title.isEmpty ? nil : pm.title
@@ -1004,10 +1020,7 @@ final class TranscriptStore: ObservableObject {
             } else if !dict {
                 self.fetchCalendarContext()             // non-blocking auto-title from the calendar
             }
-            await self.streamSession()
-            await Task.yield()          // let the trailing .final/.ended land on the main actor first
-            guard self.stopping else { return }
-            self.finalizeStoppedSession(isDictation: dict)
+            await self.streamSession(session: session)
         }
     }
 
@@ -1096,7 +1109,7 @@ final class TranscriptStore: ObservableObject {
 
     /// Runs one segment's streams to completion (returns when stop/pause ends them). On failure it
     /// surfaces the error and clears session state — including dictation flags (so the HUD can't stick).
-    private func streamSession() async {
+    private func streamSession(session: CaptureSession) async {
         let variant = selectedModel
         let lang = language == "auto" ? nil : language
         let compute = compute
@@ -1107,10 +1120,12 @@ final class TranscriptStore: ObservableObject {
             let folder = try await models.ensureDownloaded(variant) { [weak self] fraction in
                 if case .downloading = self?.status { self?.status = .downloading(fraction) }
             }
+            guard !session.isStopped else { return }
             try await withTimeout(Self.loadTimeout) { [pipeline = self.pipeline] in
                 try await pipeline!.prepare(variant: variant, folder: folder, compute: compute)
             }
             modelReady = true
+            guard !session.isStopped else { return }
             DebugLog.log("record streaming \(variant)")
             let captureSystem = !dictating && captureMode == .micAndSystem   // dictation is mic-only
             // Meetings only: a dictation snippet is pasted and gone, there is nothing to replay.
@@ -1121,8 +1136,10 @@ final class TranscriptStore: ObservableObject {
             }
             try await pipeline.start(variant: variant, modelFolder: folder, language: lang, compute: compute,
                                      captureSystem: captureSystem, dictation: dictating,
+                                     session: session,
                                      recorder: dictating ? nil : audioRecorder)
         } catch {
+            if session.isStopped { return }
             DebugLog.log("record failed: \(error.localizedDescription)")
             status = .error(error.localizedDescription)
             isRecording = false
@@ -1136,20 +1153,22 @@ final class TranscriptStore: ObservableObject {
     func stop() {
         DebugLog.log("RECORD stop pressed; isRecording=\(isRecording) paused=\(isPaused)")
         guard isRecording else { return }
-        let wasPaused = isPaused
+        let session = captureSession
+        let task = runTask
+        let dict = dictating
         stopping = true
+        captureSession?.stop()
         isPaused = false
         isRecording = false
         status = .idle
         levels = []
         levelsThem = []
-        if wasPaused {
-            // Pausing already ended the segment, so its runTask has finished — there is NO live task
-            // left to drain and finalize. Finalize here directly, or the meeting is silently dropped.
-            finalizeStoppedSession(isDictation: dictating)
-        } else {
-            // Do NOT cancel runTask — it must drain the tail flush and then finalize (archive/insert).
-            Task { await pipeline.stop() }
+        // Every final event is awaited by the worker. Waiting for the segment here also handles
+        // stop immediately after pause, while that segment is still flushing its last phrase.
+        Task { [weak self] in
+            await task?.value
+            guard let self, self.captureSession === session, self.stopping else { return }
+            self.finalizeStoppedSession(isDictation: dict)
         }
     }
 
@@ -1165,15 +1184,13 @@ final class TranscriptStore: ObservableObject {
         status = .idle
         levels = []
         levelsThem = []
-        Task { await pipeline.stop() }   // segment ends; runTask sees !stopping → no finalize
+        captureSession?.stop()          // segment ends; runTask sees !stopping → no finalize
         DebugLog.log("RECORD paused")
     }
 
     func resume() {
         guard isRecording, isPaused else { return }
         isPaused = false
-        segmentBaseSec += pendingSegmentAdvance   // now the prior tail has been placed on the old base
-        pendingSegmentAdvance = 0
         launchRunTask(reset: false)               // new segment; keeps transcript/notes
     }
 
@@ -1223,7 +1240,7 @@ final class TranscriptStore: ObservableObject {
 
     /// Hotkey pressed: start a mic-only session whose text we insert on release.
     func startDictation() {
-        guard !isRecording, stage == .ready else {
+        guard !isRecording, !stopping, !dictationProcessing, stage == .ready else {
             DebugLog.log("dictation ignored: recording=\(isRecording) stage=\(stage)")
             return
         }
@@ -1292,6 +1309,14 @@ final class TranscriptStore: ObservableObject {
     /// Insert a finished dictation — with AI cleanup when enabled (offloaded, timeout-guarded), else raw.
     private func finishInsert(_ text: String) {
         let cfg = llmConfig()
+        if let blocked = blockedDictationConfig {
+            if blocked == cfg {
+                insertDictation(text)
+                return
+            }
+            blockedDictationConfig = nil
+            dictationError = nil
+        }
         if aiDictationEnabled, !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty {
             dictationProcessing = true
             let hint = aiDictationStyle.hint
@@ -1299,10 +1324,16 @@ final class TranscriptStore: ObservableObject {
             DebugLog.log("dictation AI polish start (\(raw.count) chars, style=\(aiDictationStyle.rawValue))")
             Task { [weak self] in
                 let t0 = Date()
-                let polished = await Self.polishWithTimeout(raw, cfg: cfg, hint: hint,
-                                                            glossary: GlossaryStore.shared.promptFragment)
+                let result = await Self.polishWithTimeout(raw, cfg: cfg, hint: hint,
+                                                         glossary: GlossaryStore.shared.promptFragment)
                 guard let self else { return }
+                let polished = result.text
                 self.dictationProcessing = false
+                self.dictationError = result.error?.localizedDescription
+                if case .http(let code, _) = result.error, code == 401 || code == 403 {
+                    self.blockedDictationConfig = cfg
+                    self.llmTest = result.error?.localizedDescription ?? ""
+                }
                 let ms = Int(Date().timeIntervalSince(t0) * 1000)
                 DebugLog.log("dictation AI polish done in \(ms)ms (in=\(raw.count) out=\(polished.count) changed=\(polished != raw))")
                 self.insertDictation(GlossaryStore.shared.correct(polished))
@@ -1329,23 +1360,24 @@ final class TranscriptStore: ObservableObject {
 
     /// Run the LLM polish with a hard timeout; returns the polished text, or the raw text if the
     /// model errors or is too slow (dictation must feel instant, never hang on a slow endpoint).
-    private static func polishWithTimeout(_ text: String, cfg: LLMConfig,
-                                          hint: String, glossary: String?) async -> String {
+    private struct PolishResult: Sendable {
+        let text: String
+        let error: LLMError?
+    }
+
+    private nonisolated static func polishWithTimeout(_ text: String, cfg: LLMConfig,
+                                                      hint: String, glossary: String?) async -> PolishResult {
         let gen = NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, glossary: glossary)
-        return await withTaskGroup(of: String.self) { group in
-            group.addTask {
-                do { return try await gen.polishDictation(text, styleHint: hint) }
-                catch { DebugLog.log("dictation AI polish ERROR: \(error) → fallback raw"); return text }
+        do {
+            let polished = try await withTimeout(6, timeoutError: LLMError.network(
+                "ИИ не ответил за 6 секунд. Вставлен исходный текст."
+            )) {
+                try await gen.polishDictation(text, styleHint: hint)
             }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: 6_000_000_000)
-                if Task.isCancelled { return text }
-                DebugLog.log("dictation AI polish TIMEOUT (>6s) → fallback raw")
-                return text
-            }
-            let first = await group.next() ?? text
-            group.cancelAll()
-            return first
+            return PolishResult(text: polished, error: nil)
+        } catch {
+            DebugLog.log("dictation AI polish failed: \(error.localizedDescription) → fallback raw")
+            return PolishResult(text: text, error: (error as? LLMError) ?? .network(error.localizedDescription))
         }
     }
 

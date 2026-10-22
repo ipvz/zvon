@@ -4,12 +4,13 @@ import KeyboardShortcuts
 import ServiceManagement
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, hotkeys, stt, llm, integrations, audio, priv
+    case general, hotkeys, screenshots, stt, llm, integrations, audio, priv
     var id: String { rawValue }
     var title: String {
         switch self {
         case .general: return L("Общие", "General")
         case .hotkeys: return L("Горячие клавиши", "Shortcuts")
+        case .screenshots: return L("Скриншоты", "Screenshots")
         case .stt:     return L("Речь", "Speech")
         case .llm:     return L("AI-модель", "AI model")
         case .integrations: return L("Интеграции", "Integrations")
@@ -24,6 +25,7 @@ struct ParleySettingsView: View {
     @EnvironmentObject var models: ModelManager
     @ObservedObject private var loc = L11n.shared
     @ObservedObject private var taskStore = TaskStore.shared
+    @ObservedObject private var permissions = PermissionsManager.shared
     @State private var tab: SettingsTab = .general
     var onClose: (() -> Void)? = nil
 
@@ -40,6 +42,10 @@ struct ParleySettingsView: View {
         }
         .frame(minWidth: 820, idealWidth: 880, maxWidth: .infinity, minHeight: 560, idealHeight: 600, maxHeight: .infinity)
         .background(Color.pCanvas)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissions.refresh()
+            launchAtLogin = (SMAppService.mainApp.status == .enabled)
+        }
     }
 
     private func settingsTopBar(_ onClose: @escaping () -> Void) -> some View {
@@ -88,6 +94,7 @@ struct ParleySettingsView: View {
         switch tab {
         case .general: generalTab
         case .hotkeys: hotkeysTab
+        case .screenshots: screenshotsTab
         case .stt:     sttTab
         case .llm:     llmTab
         case .integrations: integrationsTab
@@ -206,6 +213,23 @@ struct ParleySettingsView: View {
         }
     }
 
+    private var screenshotsTab: some View {
+        VStack(alignment: .leading, spacing: PSpace.l) {
+            head(L("Скриншоты", "Screenshots"), L("Наведи на окно и нажми, чтобы выбрать его. Зажми и потяни, чтобы выделить область. Инструменты появятся рядом с выделением.", "Hover and click to select a window, or drag to select a region. Annotation tools appear beside your selection."))
+            group(L("Горячие клавиши", "Shortcuts")) {
+                PRow(L("Выделить область или окно", "Select region or window")) { KeyboardShortcuts.Recorder(for: .screenshotRegion) }
+                PDivider()
+                PRow(L("Весь экран", "Capture display")) { KeyboardShortcuts.Recorder(for: .screenshotDisplay) }
+            }
+            group(footnote: L("Control + C, Command + C или Enter — копировать. Escape — отменить. Снимки обрабатываются на устройстве.", "Control + C, Command + C or Enter to copy. Escape to cancel. Screenshots are processed on this device.")) {
+                PRow(L("Сделать скриншот", "Take screenshot")) {
+                    Button(L("Выделить область", "Select region")) { ScreenshotFeature.shared.region() }
+                        .buttonStyle(PBorderedButtonStyle())
+                }
+            }
+        }
+    }
+
     // MARK: Речь
 
     private var sttTab: some View {
@@ -235,6 +259,10 @@ struct ParleySettingsView: View {
                   footnote: L("Только для диктовки (удержание/переключение) — не для записи встреч. Убирает слова-паразиты и оговорки, чинит пунктуацию через ИИ. Если модель недоступна — текст вставится как есть.", "For dictation only (hold/toggle) — not for meeting recordings. Removes filler words and slips, fixes punctuation via AI. If the model is unavailable, text is inserted as-is.")) {
                 PRow(L("Чистить через ИИ", "Clean up with AI"), sub: L("Нужна настроенная AI-модель", "Requires a configured AI model")) {
                     ParleyToggle(on: $store.aiDictationEnabled)
+                }
+                if let error = store.dictationError {
+                    Text(error + L(" Диктовка вставляется без ИИ. Проверьте подключение в разделе «AI-модель».", " Dictation is inserted without AI. Check the connection in AI model settings."))
+                        .font(PFont.secondary).foregroundStyle(Color.pDanger)
                 }
                 if store.aiDictationEnabled {
                     PDivider()
@@ -525,10 +553,39 @@ struct ParleySettingsView: View {
     private var privTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
             head(L("Приватность", "Privacy"), L("Обработка на устройстве по умолчанию.", "On-device processing by default."))
+            group(L("Разрешения macOS", "macOS permissions")) {
+                permissionRow(L("Микрофон", "Microphone"), state: permissions.mic) {
+                    if permissions.mic == .denied { permissions.openSettings(.microphone) }
+                    else { Task { await permissions.requestMic() } }
+                }
+                PDivider()
+                permissionRow(L("Запись экрана", "Screen recording"), state: permissions.screen) { permissions.requestScreen() }
+                PDivider()
+                permissionRow(L("Универсальный доступ", "Accessibility"), state: permissions.accessibility) { permissions.requestAccessibility() }
+                PDivider()
+                permissionRow(L("Календарь", "Calendar"), state: permissions.calendar) { Task { await permissions.requestCalendar() } }
+                PDivider()
+                permissionRow(L("Напоминания", "Reminders"), state: permissions.reminders) { Task { await permissions.requestReminders() } }
+            }
+            if let error = permissions.error { Text(error).font(PFont.secondary).foregroundStyle(Color.pDanger) }
             group(footnote: L("Распознавание идёт локально — аудио не покидает Mac. Итог и вопросы уходят только на выбранный AI-эндпоинт.", "Recognition runs locally — audio never leaves your Mac. Summaries and questions go only to the selected AI endpoint.")) {
                 PRow(L("Распознавание речи", "Speech recognition")) { Text(L("На устройстве", "On device")).font(PFont.secondary).foregroundStyle(Color.pInk2) }
                 PDivider()
                 PRow(L("AI-заметки", "AI notes")) { Text(L("Только на ваш эндпоинт", "Only to your endpoint")).font(PFont.secondary).foregroundStyle(Color.pInk2) }
+            }
+        }
+        .onAppear { permissions.refresh() }
+    }
+
+    private func permissionRow(_ title: String, state: PermState, action: @escaping () -> Void) -> some View {
+        PRow(title) {
+            if state == .granted {
+                Label(L("Разрешён", "Granted"), systemImage: "checkmark.circle.fill")
+                    .font(.system(size: 12)).foregroundStyle(Color.pSuccess)
+            } else {
+                Button(state == .denied ? L("Открыть настройки", "Open settings") : L("Разрешить", "Grant"), action: action)
+                    .buttonStyle(PBorderedButtonStyle())
+                    .accessibilityLabel(L("Разрешить: ", "Grant: ") + title)
             }
         }
     }

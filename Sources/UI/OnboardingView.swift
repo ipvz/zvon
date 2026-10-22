@@ -61,7 +61,7 @@ struct OnboardingView: View {
             ParleyMark(heights: [16, 26, 20], color: .pAccent)
                 .frame(width: 60, height: 60)
                 .background(Color.pAccent.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 16))
-            Text(L("Добро пожаловать в Parley", "Welcome to Parley")).font(PFont.heading).foregroundStyle(Color.pInk1)
+            Text(L("Добро пожаловать в ZVON", "Welcome to ZVON")).font(PFont.heading).foregroundStyle(Color.pInk1)
                 .multilineTextAlignment(.center)
             Text(L("Локальный ассистент встреч и диктовки. Распознавание и обработка — на вашем Mac, без облака.", "A local assistant for meetings and dictation. Recognition and processing run on your Mac, no cloud."))
                 .font(PFont.secondary).foregroundStyle(Color.pInk2)

@@ -16,7 +16,7 @@ struct ParleyApp: App {
     }
 
     var body: some Scene {
-        Window("Parley", id: "main") {
+        Window("ZVON", id: "main") {
             ZStack {
                 MeetingView()
                     .environmentObject(store)
@@ -31,6 +31,10 @@ struct ParleyApp: App {
         .windowResizability(.contentMinSize)
         .defaultSize(width: 1040, height: 680)
         .commands {
+            CommandMenu("Скриншот") {
+                Button("Выделить область…") { ScreenshotFeature.shared.region() }
+                Button("Весь экран…") { ScreenshotFeature.shared.display() }
+            }
             // Settings live INSIDE the main window (no separate window). Replace the default
             // "Settings…" (⌘,) so it just switches the main window to the settings page.
             CommandGroup(replacing: .appSettings) {
@@ -60,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var themeCancellable: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        ScreenshotFeature.shared.registerShortcuts()
         let store = TranscriptStore.shared
         menuBar = MenuBarController(store: store)
         widget = FloatingWidgetController(store: store)

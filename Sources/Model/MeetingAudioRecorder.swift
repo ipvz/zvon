@@ -24,6 +24,7 @@ final class MeetingAudioRecorder: @unchecked Sendable {
     private static let maxBacklog = Int(sampleRate * 3)
 
     private let lock = NSLock()
+    private let writerLock = NSLock()  // serializes file I/O; never acquired by the capture callback
     private let startedAt: Date
     private let sessionId: UUID
     private var pending: [Speaker: [Float]] = [.me: [], .them: []]
@@ -86,17 +87,18 @@ final class MeetingAudioRecorder: @unchecked Sendable {
     /// Flush and close. Returns the file if any audio was captured.
     @discardableResult
     func finish() -> URL? {
+        writerLock.lock(); defer { writerLock.unlock() }
         lock.lock()
+        guard !closed else { lock.unlock(); return nil }
         let hadAudio = sawAudio
         lock.unlock()
 
         timer?.cancel(); timer = nil
-        flush(final: true)
+        flushLocked(final: true)
 
         lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { return nil }
         closed = true
+        lock.unlock()
         let frames = writtenFrames
         file = nil                                    // closing the handle finalises the container
         guard hadAudio, frames > 0 else {
@@ -116,9 +118,15 @@ final class MeetingAudioRecorder: @unchecked Sendable {
     // MARK: - Writing
 
     private func flush(final: Bool) {
+        writerLock.lock(); defer { writerLock.unlock() }
+        flushLocked(final: final)
+    }
+
+    /// Called with writerLock held. Only extracting pending samples holds the capture lock;
+    /// encoder work, filesystem access and closing the file cannot block microphone delivery.
+    private func flushLocked(final: Bool) {
         lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { return }
+        guard !closed else { lock.unlock(); return }
 
         let elapsed = Date().timeIntervalSince(startedAt) - (final ? 0 : Self.writeLag)
         let target = AVAudioFramePosition(max(0, elapsed) * Self.sampleRate)
@@ -127,7 +135,7 @@ final class MeetingAudioRecorder: @unchecked Sendable {
             // On the last pass, never cut audio that is still queued.
             needed = max(needed, pending.values.map(\.count).max() ?? 0)
         }
-        guard needed > 0 else { return }
+        guard needed > 0 else { lock.unlock(); return }
 
         // A stream that ran ahead is trimmed from the FRONT: dropping the oldest surplus keeps the
         // channel aligned to now, where keeping it would push that side permanently late.
@@ -154,6 +162,7 @@ final class MeetingAudioRecorder: @unchecked Sendable {
 
         let left = take(.me, needed)
         let right = take(.them, needed)
+        lock.unlock()
 
         do {
             let (f, fmt) = try ensureFile()

@@ -38,6 +38,8 @@ enum SessionFilter: String, CaseIterable, Identifiable { case all, meetings, dic
 final class SessionStore: ObservableObject {
     static let shared = SessionStore()
     @Published private(set) var sessions: [SessionRecord] = []
+    @Published var persistenceError: String?
+    private var pendingSaves: [UUID: SessionRecord] = [:]
 
     private static let key = "sessions"   // legacy UserDefaults blob — read once for migration, then left as backup
     private let db: SessionDB?
@@ -52,7 +54,18 @@ final class SessionStore: ObservableObject {
     init() {
         db = SessionDB(path: Self.dbURL().path)
         migrateFromUserDefaultsIfNeeded()
-        sessions = db?.all() ?? Self.legacyLoad()   // SQLite is source of truth; fall back to the old blob only if the DB failed to open
+        do {
+            sessions = try db?.all() ?? Self.legacyLoad()
+            if db == nil { persistenceError = "Не удалось открыть историю записей. Новые записи пока хранятся только в памяти." }
+        } catch {
+            sessions = Self.legacyLoad()
+            report(error)
+        }
+        // A failed migration still leaves its records available to copy or retry saving.
+        for record in pendingSaves.values where !sessions.contains(where: { $0.id == record.id }) {
+            sessions.append(record)
+        }
+        sessions.sort { $0.date > $1.date }
     }
 
     // MARK: Add
@@ -70,7 +83,7 @@ final class SessionStore: ObservableObject {
     func updateUserNotes(_ id: UUID, _ text: String) {
         guard let i = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[i].userNotes = text.isEmpty ? nil : text
-        db?.insert(sessions[i])
+        persist(sessions[i])
     }
 
     func addDictation(text: String, date: Date) {
@@ -78,16 +91,50 @@ final class SessionStore: ObservableObject {
     }
 
     func remove(_ id: UUID) {
+        do {
+            guard let db else { throw unavailableError }
+            try db.delete(id)
+        } catch { report(error); return }
+        pendingSaves[id] = nil
         sessions.removeAll { $0.id == id }
-        db?.delete(id)
         SpaceStore.shared.purge(meeting: id)   // drop it from any space it was tagged into
     }
 
     /// No cap: SQLite scales to tens of thousands of rows, and a single-row INSERT is cheap (unlike
     /// re-serialising the whole array). A flood of dictations can never again evict meetings.
     private func insert(_ record: SessionRecord) {
-        sessions.insert(record, at: 0)
-        db?.insert(record)
+        if let index = sessions.firstIndex(where: { $0.id == record.id }) {
+            sessions[index] = record
+        } else {
+            sessions.insert(record, at: 0)
+        }
+        persist(record)
+    }
+
+    private var unavailableError: NSError {
+        NSError(domain: "ZVON.History", code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "База истории недоступна."])
+    }
+
+    private func persist(_ record: SessionRecord) {
+        do {
+            guard let db else { throw unavailableError }
+            try db.insert(record)
+            pendingSaves[record.id] = nil
+        } catch {
+            pendingSaves[record.id] = record
+            report(error)
+        }
+    }
+
+    private func report(_ error: Error) {
+        persistenceError = "Не удалось обновить историю: \(error.localizedDescription) Новые изменения сохранены только в памяти. Скопируйте нужный текст перед закрытием приложения."
+        DebugLog.log("history storage failed: \(error.localizedDescription)")
+    }
+
+    func retrySaving() {
+        persistenceError = nil
+        for record in Array(pendingSaves.values) { persist(record) }
     }
 
     // MARK: Query
@@ -143,7 +190,7 @@ final class SessionStore: ObservableObject {
         guard let db, db.isEmpty else { return }
         let legacy = Self.legacyLoad()
         guard !legacy.isEmpty else { return }
-        for r in legacy { db.insert(r) }
+        for r in legacy { persist(r) }
         DebugLog.log("SessionStore: migrated \(legacy.count) records from UserDefaults → SQLite")
     }
 }

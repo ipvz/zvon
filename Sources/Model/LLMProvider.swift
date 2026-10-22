@@ -1,7 +1,7 @@
 import Foundation
 
 /// Wire format of the endpoint — OpenAI-compatible `/chat/completions` or Anthropic `/messages`.
-enum LLMAPIStyle { case openai, anthropic }
+enum LLMAPIStyle: Equatable, Sendable { case openai, anthropic }
 
 /// A selectable LLM backend. Cloud providers (OpenAI/Anthropic) have a fixed endpoint + need a
 /// key; local/hf/custom let the user provide their own OpenAI-compatible endpoint.

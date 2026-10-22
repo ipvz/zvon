@@ -1,5 +1,22 @@
 import Foundation
 
+/// One capture segment's stop signal. Created before any asynchronous setup, so releasing
+/// the key cannot be lost while the model or the microphone is still starting.
+final class CaptureSession: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+
+    var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
+
+    func stop() {
+        lock.lock(); defer { lock.unlock() }
+        stopped = true
+    }
+}
+
 /// Floating-widget size (the NSPanel morphs between these).
 enum WidgetSize: Sendable { case puck, expanded }   // collapsed tile ↔ 376-wide panel (spec: 4 states = these 2 × isRecording)
 

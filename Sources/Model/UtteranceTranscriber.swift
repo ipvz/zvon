@@ -25,15 +25,16 @@ actor UtteranceTranscriber {
         /// Push-to-talk dictation: the key-release ends the utterance, so allow long thinking-pauses
         /// (≈1.6s) before auto-endpointing — a mid-sentence pause must not split the phrase. Also
         /// relaxes the min-length/energy gates so a quick short word («Алло») isn't dropped.
-        static let dictation = Config(endpointSilence: 1.6, minUtterance: 0.15, maxUtterance: 45, isDictation: true)
+        static let dictation = Config(endpointSilence: 1.6, minUtterance: 0.15, maxUtterance: 45, showInterim: false, isDictation: true)
     }
 
-    private enum Job { case interim([Float]); case final([Float], Double) }
+    private enum Job { case interim([Float], Int); case final([Float], Double) }
 
     private let decodeFn: @Sendable ([Float]) async -> (text: String, confidence: Float)
     private let source: LiveAudioSource
-    private let onEvent: @Sendable (TranscriptionEvent) -> Void
+    private let onEvent: @Sendable (TranscriptionEvent) async -> Void
     private let cfg: Config
+    private let session: CaptureSession
     private let sr: Float = 16000
 
     private var running = false
@@ -48,6 +49,7 @@ actor UtteranceTranscriber {
     private var vadTick = 0
     private var lastInterimWall: Double = 0
     private var interimInFlight = false
+    private var utteranceGeneration = 0
     private var jobCont: AsyncStream<Job>.Continuation?
 
     private static let hallucinations = [
@@ -63,17 +65,20 @@ actor UtteranceTranscriber {
         decode: @escaping @Sendable ([Float]) async -> (text: String, confidence: Float),
         source: LiveAudioSource,
         config: Config = Config(),
-        onEvent: @escaping @Sendable (TranscriptionEvent) -> Void
+        session: CaptureSession = CaptureSession(),
+        onEvent: @escaping @Sendable (TranscriptionEvent) async -> Void
     ) {
         self.decodeFn = decode
         self.source = source
         self.cfg = config
+        self.session = session
         self.onEvent = onEvent
     }
 
-    func stop() { running = false }
+    func stop() { session.stop(); running = false }
 
     func run() async throws {
+        guard !session.isStopped, !Task.isCancelled else { return }
         try source.start()
         running = true
         DebugLog.log("utterance loop start")
@@ -88,9 +93,9 @@ actor UtteranceTranscriber {
         // Observe cancellation: when a sibling stream throws, the task group cancels this one. Without
         // the isCancelled checks the `try?`-swallowed sleep would busy-spin at 100% CPU, leak the audio
         // tap (source.stop() below never runs), and hang the group so the real error is never surfaced.
-        while running && !Task.isCancelled {
+        while running && !session.isStopped && !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 40_000_000)
-            if !running || Task.isCancelled { break }
+            if !running || session.isStopped || Task.isCancelled { break }
             let now = monotonicSeconds()
             let dt = Float(now - lastWall)
             guard dt >= Float(cfg.tick) else { continue }
@@ -99,7 +104,7 @@ actor UtteranceTranscriber {
             let samples = source.snapshotSamples()
             let energy = source.snapshotEnergy()
             let nowAbs = windowStartSample + samples.count
-            guard samples.count > Int(0.2 * sr) else { onEvent(.meter(energy)); continue }
+            guard samples.count > Int(0.2 * sr) else { await onEvent(.meter(energy)); continue }
 
             let rms = Self.rms(of: samples, lastSeconds: 0.18, sr: sr)
             peakRMS = max(peakRMS * powf(0.5, dt), rms)
@@ -129,7 +134,7 @@ actor UtteranceTranscriber {
                         if let slice = sliceOf(from: utteranceStartAbs, to: nowAbs, window: samples) {
                             interimInFlight = true
                             lastInterimWall = now
-                            jobCont?.yield(.interim(slice))
+                            jobCont?.yield(.interim(slice, utteranceGeneration))
                         }
                     }
                     if uttLen >= cfg.maxUtterance { endpoint(endAbs: nowAbs, window: samples) }
@@ -154,9 +159,11 @@ actor UtteranceTranscriber {
                     }
                 }
             }
-            onEvent(.meter(energy))
+            await onEvent(.meter(energy))
         }
 
+        // Release the device before draining model work. No more samples are needed after stop.
+        source.stop()
         let tail = source.snapshotSamples()
         // On key-release / stop, flush the tail. For dictation flush even if the VAD never latched
         // onset, so a short/quiet word said during the hold isn't lost (push-to-talk boundary = key).
@@ -164,14 +171,14 @@ actor UtteranceTranscriber {
         if !Task.isCancelled, inSpeech || cfg.isDictation { endpoint(endAbs: windowStartSample + tail.count, window: tail) }
         jobCont?.finish()
         await worker.value
-        source.stop()
-        onEvent(.ended)
+        await onEvent(.ended)
         DebugLog.log("utterance loop end")
     }
 
     // MARK: - Endpoint (energy-gated) → job
 
     private func endpoint(endAbs: Int, window samples: [Float]) {
+        utteranceGeneration += 1
         let start = utteranceStartAbs
         let peak = utterancePeakRMS
         inSpeech = false
@@ -202,20 +209,21 @@ actor UtteranceTranscriber {
 
     private func process(_ job: Job) async {
         switch job {
-        case .interim(let slice):
+        case .interim(let slice, let generation):
+            defer { interimInFlight = false }
+            guard generation == utteranceGeneration, inSpeech, !session.isStopped else { return }
             let text = await decode(slice).text
-            interimInFlight = false
-            if inSpeech, !text.isEmpty { onEvent(.interim(text)) }
+            if generation == utteranceGeneration, inSpeech, !session.isStopped, !text.isEmpty { await onEvent(.interim(text)) }
         case .final(let slice, let startSec):
             let r = await decode(slice)
             if r.text.isEmpty || Self.isLikelyNoise(r.text, r.confidence, dictation: cfg.isDictation) {
                 if !r.text.isEmpty {
                     DebugLog.log("final DROPPED (noise) conf=\(String(format: "%.2f", r.confidence)): «\(r.text.prefix(24))»")
                 }
-                onEvent(.interim(""))   // clear a stale preview if the final was rejected
+                await onEvent(.interim(""))   // clear a stale preview if the final was rejected
             } else {
                 DebugLog.log("final +\(r.text.count) @\(String(format: "%.1f", startSec))s conf=\(String(format: "%.2f", r.confidence))")
-                onEvent(.final(text: r.text, startSec: startSec, confidence: r.confidence))
+                await onEvent(.final(text: r.text, startSec: startSec, confidence: r.confidence))
             }
         }
     }
@@ -238,7 +246,12 @@ actor UtteranceTranscriber {
     }
 
     private func decode(_ slice: [Float]) async -> (text: String, confidence: Float) {
+        let began = monotonicSeconds()
         let r = await decodeFn(slice)
+        let elapsed = monotonicSeconds() - began
+        if elapsed > 1 {
+            DebugLog.log(String(format: "decode slow: %.2fs for %.2fs audio", elapsed, Double(slice.count) / Double(sr)))
+        }
         return (Self.clean(r.text), r.confidence)
     }
 

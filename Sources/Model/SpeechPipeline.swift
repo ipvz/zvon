@@ -1,5 +1,4 @@
 import Foundation
-import WhisperKit   // AudioProcessor (standalone mic capture)
 import FluidAudio   // Language
 
 /// Owns the speech engine (Parakeet TDT v3) and drives one or two VAD-segmented streams:
@@ -8,16 +7,16 @@ import FluidAudio   // Language
 ///
 /// Legacy `variant`/`folder`/`compute` args are ignored (kept so call sites are unchanged).
 actor SpeechPipeline {
-    private let onStatus: @Sendable (PipelineStatus) -> Void
-    private let onEvent: @Sendable (Speaker, TranscriptionEvent) -> Void
+    private let onStatus: @Sendable (PipelineStatus) async -> Void
+    private let onEvent: @Sendable (Speaker, TranscriptionEvent) async -> Void
 
     private var engine: ParakeetEngine?
-    private var micStreamer: UtteranceTranscriber?
-    private var sysStreamer: UtteranceTranscriber?
+    private var engineLoad: (id: UUID, task: Task<ParakeetEngine, Error>)?
+    private var engineGeneration = 0
 
     init(
-        onStatus: @escaping @Sendable (PipelineStatus) -> Void,
-        onEvent: @escaping @Sendable (Speaker, TranscriptionEvent) -> Void
+        onStatus: @escaping @Sendable (PipelineStatus) async -> Void,
+        onEvent: @escaping @Sendable (Speaker, TranscriptionEvent) async -> Void
     ) {
         self.onStatus = onStatus
         self.onEvent = onEvent
@@ -29,9 +28,13 @@ actor SpeechPipeline {
 
     func start(variant: String, modelFolder: URL, language: String?, compute: ComputePreference,
                captureSystem: Bool, dictation: Bool = false,
+               session: CaptureSession,
                recorder: MeetingAudioRecorder? = nil) async throws {
+        guard !session.isStopped else { return }
         let engine = try await ensureEngine()
+        guard !session.isStopped else { return }
         await engine.setLanguage(language.flatMap(Language.parley))
+        guard !session.isStopped else { return }
 
         let onEvent = self.onEvent
         let micSource = MicAudioSource()
@@ -42,9 +45,9 @@ actor SpeechPipeline {
             // Dictation: tolerate longer thinking-pauses before ending the utterance (the key-release
             // closes it anyway) so a mid-sentence pause isn't mistaken for the end.
             config: dictation ? .dictation : UtteranceTranscriber.Config(),
-            onEvent: { event in onEvent(.me, event) }
+            session: session,
+            onEvent: { event in await onEvent(.me, event) }
         )
-        micStreamer = mic
 
         var sys: UtteranceTranscriber?
         if captureSystem, #available(macOS 14.2, *) {
@@ -53,46 +56,71 @@ actor SpeechPipeline {
             sys = UtteranceTranscriber(
                 decode: { await engine.decode($0) },
                 source: sysSource,
-                onEvent: { event in onEvent(.them, event) }
+                session: session,
+                onEvent: { event in await onEvent(.them, event) }
             )
-            sysStreamer = sys
         }
 
-        onStatus(.listening)
+        await onStatus(.listening)
         DebugLog.log("pipeline.start → streams (mic\(sys != nil ? " + system" : ""))")
 
         // The mic is essential: propagate its failure (e.g. denied microphone permission) so the
         // store surfaces an error instead of hanging on "Слушаю" forever. System audio stays
         // isolated — its failure must never take the mic down.
-        try await withThrowingTaskGroup(of: Void.self) { group in
-            group.addTask { try await mic.run() }
-            if let sys { group.addTask { try? await sys.run() } }
-            try await group.waitForAll()
+        do {
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                group.addTask { try await mic.run() }
+                if let sys {
+                    group.addTask {
+                        do { try await sys.run() }
+                        catch { DebugLog.log("system capture failed: \(error.localizedDescription)") }
+                    }
+                }
+                // next() throws as soon as a stream fails. waitForAll() waits for the still-live
+                // sibling first and can therefore hide a microphone error indefinitely.
+                while try await group.next() != nil {}
+            }
+        } catch {
+            await onStatus(.idle)
+            throw error
         }
+        await onStatus(.idle)
         DebugLog.log("pipeline.start → streams ended")
     }
 
-    func stop() async {
-        DebugLog.log("pipeline.stop")
-        await micStreamer?.stop()
-        await sysStreamer?.stop()
-        micStreamer = nil
-        sysStreamer = nil
-        onStatus(.idle)
-    }
-
     func evictAll() {
+        engineGeneration += 1
         engine = nil
+        // Do not spawn a second CoreML compilation if the old one is still running.
     }
 
     private func ensureEngine() async throws -> ParakeetEngine {
         if let engine { return engine }
-        onStatus(.loadingModel)
-        DebugLog.log("Parakeet load begin")
-        let engine = ParakeetEngine(language: .russian)
-        try await engine.load()
-        DebugLog.log("Parakeet load done")
-        self.engine = engine
-        return engine
+        let generation = engineGeneration
+        let load: (id: UUID, task: Task<ParakeetEngine, Error>)
+        if let engineLoad {
+            load = engineLoad
+        } else {
+            let task = Task {
+                DebugLog.log("Parakeet load begin")
+                let engine = ParakeetEngine(language: .russian)
+                try await engine.load()
+                DebugLog.log("Parakeet load done")
+                return engine
+            }
+            load = (UUID(), task)
+            engineLoad = load
+        }
+        await onStatus(.loadingModel)
+        do {
+            let loaded = try await load.task.value
+            guard generation == engineGeneration else { throw CancellationError() }
+            engine = loaded
+            if engineLoad?.id == load.id { engineLoad = nil }
+            return loaded
+        } catch {
+            if engineLoad?.id == load.id { engineLoad = nil }
+            throw error
+        }
     }
 }

@@ -599,7 +599,11 @@ struct DictationHUDView: View {
     var body: some View {
         ZStack {
             if store.isDictating {
-                SpectrogramPill(store: store)
+                if store.isRecording {
+                    SpectrogramPill(store: store)
+                } else {
+                    ProcessingPill()
+                }
             } else if store.dictationProcessing {
                 ProcessingPill()
             } else if let text = store.dictationCard {
@@ -871,6 +875,13 @@ struct MenuBarPopover: View {
                     Hairline(color: .pLine2).padding(.vertical, 4)
                 }
                 popRow(L("Открыть ZVON", "Open ZVON"), Hotkeys.openNotes) { openMain(); closePopover() }
+                Menu {
+                    Button(L("Выделить область…", "Capture region…")) { closePopover(); ScreenshotFeature.shared.region() }
+                    Button(L("Весь экран…", "Capture display…")) { closePopover(); ScreenshotFeature.shared.display() }
+                } label: {
+                    Label(L("Сделать скриншот", "Take screenshot"), systemImage: "viewfinder")
+                        .font(PFont.secondary).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 5)
+                }.menuStyle(.borderlessButton)
                 popRow(store.widgetHidden ? L("Показать виджет", "Show widget") : L("Скрыть виджет", "Hide widget"), "") {
                     if store.widgetHidden { FloatingWidgetController.shared?.reveal() } else { store.widgetHidden = true }
                     closePopover()

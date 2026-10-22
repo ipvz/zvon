@@ -35,6 +35,16 @@ packages:
     from: "1.9.0"
 
 targets:
+  ZVONScreenshots:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: Modules/Screenshots/Sources
+    settings:
+      base:
+        PRODUCT_MODULE_NAME: ZVONScreenshots
+        DEFINES_MODULE: YES
+        CODE_SIGNING_ALLOWED: NO
   Parley:
     type: application
     platform: macOS
@@ -56,6 +66,7 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "@executable_path/../Frameworks"
     dependencies:
+      - target: ZVONScreenshots
       - package: WhisperKit
         product: WhisperKit
       - package: FluidAudio
