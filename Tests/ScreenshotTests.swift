@@ -7,6 +7,7 @@ struct ScreenshotTests {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         let source = fixture()
+        try magnifier(source)
         try videoSelection(source)
         try geometry(source)
         try await rendering(source)
@@ -20,6 +21,68 @@ struct ScreenshotTests {
 
     static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() { throw NSError(domain: "ScreenshotTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+    }
+
+    @MainActor static func magnifier(_ source: CGImage) throws {
+        let size = CGSize(width: 500, height: 300), pixels = CGSize(width: 1000, height: 600)
+        typealias G = ScreenshotMagnifierGeometry
+        try expect(G.pixel(at: CGPoint(x: 10.75, y: 20.25), display: size, image: pixels) == CGPoint(x: 21, y: 40), "Retina loupe must address native pixels without rounding across boundaries")
+        try expect(G.pixel(at: CGPoint(x: -1, y: 300), display: size, image: pixels) == CGPoint(x: 0, y: 599), "Pixel lookup must clamp at display edges")
+        for point in [CGPoint.zero, CGPoint(x: 499, y: 0), CGPoint(x: 0, y: 299), CGPoint(x: 499, y: 299), CGPoint(x: 250, y: 150)] {
+            let frame = G.frame(near: point, in: CGRect(origin: .zero, size: size))
+            try expect(CGRect(origin: .zero, size: size).contains(frame) && !frame.contains(point), "Loupe must stay on screen without covering the cursor")
+            let pixel = G.pixel(at: point, display: size, image: pixels)
+            let sample = G.sampleRect(pixel: pixel, display: size, image: pixels)
+            let destination = G.destination(sample: sample, pixel: pixel, display: size, image: pixels)
+            let x = destination.minX + (pixel.x - sample.minX + 0.5) * destination.width / sample.width
+            let y = destination.minY + (pixel.y - sample.minY + 0.5) * destination.height / sample.height
+            try expect(x == G.preview.midX && y == G.preview.midY, "Edge crops must keep the exact targeted pixel in the crosshair")
+        }
+        let display = ScreenshotDisplay(id: 1, frame: CGRect(x: -500, y: -300, width: 500, height: 300), image: source)
+        let view = ScreenshotSelectionView(display: display, mode: .region, windows: [])
+        let panel = ScreenshotSelectionPanel(contentRect: display.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.contentView = view
+        defer { view.resetSelection(); panel.contentView = nil; panel.close() }
+        func hover(_ point: CGPoint) { view.updateHover(globalPoint: CGPoint(x: point.x - 500, y: -point.y)) }
+        func mouse(_ type: NSEvent.EventType, _ point: CGPoint) {
+            view.mouseDownIfNeeded(type, event: NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
+        }
+        hover(CGPoint(x: 100, y: 50))
+        try expect(view.magnifier?.pixel == CGPoint(x: 200, y: 100) && view.magnifier?.isHidden == false, "Negative monitor origins must preserve loupe coordinates")
+        try expect(view.magnifier?.hitTest(.zero) == nil, "Loupe must never intercept selection gestures")
+        let loupe = view.magnifier!
+        let bitmap = loupe.bitmapImageRepForCachingDisplay(in: loupe.bounds)!
+        loupe.cacheDisplay(in: loupe.bounds, to: bitmap)
+        // Fixture has a dark band above y=100 and white below; verify native-image orientation.
+        let sx = CGFloat(bitmap.pixelsWide) / loupe.bounds.width, sy = CGFloat(bitmap.pixelsHigh) / loupe.bounds.height
+        let above = bitmap.colorAt(x: Int(82 * sx), y: Int(40 * sy))!.usingColorSpace(.deviceRGB)!
+        let below = bitmap.colorAt(x: Int(82 * sx), y: Int(100 * sy))!.usingColorSpace(.deviceRGB)!
+        try expect(above.redComponent < 0.3 && below.redComponent > 0.7, "Loupe must show source pixels upright with no vertical mirroring")
+        try FileManager.default.createDirectory(atPath: ".build/screenshot-tests", withIntermediateDirectories: true)
+        try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: ".build/screenshot-tests/magnifier.png"))
+        hover(CGPoint(x: 510, y: 50))
+        try expect(loupe.isHidden, "Loupe must disappear when the pointer leaves its display")
+        mouse(.leftMouseDown, CGPoint(x: 60, y: 60)); mouse(.leftMouseDragged, CGPoint(x: 300, y: 180))
+        try expect(view.magnifier?.isHidden == false, "Loupe must follow region dragging")
+        mouse(.leftMouseUp, CGPoint(x: 300, y: 180))
+        try expect(view.magnifier == nil || view.magnifier!.isHidden, "Finishing selection must hide the loupe")
+        view.document!.chooseTool(.arrow); hover(CGPoint(x: 150, y: 120))
+        try expect(view.magnifier == nil || view.magnifier!.isHidden, "Drawing tools must not show the crop loupe")
+        weak var released: ScreenshotMagnifierView?
+        try autoreleasepool {
+            hover(CGPoint(x: 60, y: 60))
+            try expect(view.magnifier?.isHidden == false, "Crop corners must enable precise readjustment")
+            mouse(.leftMouseDown, CGPoint(x: 60, y: 60)); mouse(.leftMouseDragged, CGPoint(x: 55, y: 55))
+            try expect(view.magnifier?.pixel == CGPoint(x: 110, y: 110), "Resizing must track exact native pixels")
+            mouse(.leftMouseDragged, CGPoint(x: 500, y: 300))
+            try expect(view.magnifier?.isHidden == false && view.magnifier?.pixel == CGPoint(x: 999, y: 599), "Dragging to the display boundary must keep the last native pixel visible")
+            mouse(.leftMouseUp, CGPoint(x: 55, y: 55))
+            released = view.magnifier
+            view.resetSelection()
+        }
+        try expect(released == nil, "Closing selection must release the loupe and its cached crop")
+        print("PASS: magnifier native pixels, Retina, negative monitor origins, edge alignment, upright preview, gestures and teardown")
     }
 
     @MainActor static func videoSelection(_ source: CGImage) throws {

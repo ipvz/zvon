@@ -40,6 +40,7 @@ final class ScreenshotSelectionView: NSView {
     private var windowCaptureTask: Task<Void, Never>?
     private var exportTask: Task<Void, Never>?
     private var generation = 0
+    private(set) var magnifier: ScreenshotMagnifierView?
     private let sizeLabel = ScreenshotOverlayLabel(fontName: "Menlo-Medium", size: 11)
     private let hintLabel = ScreenshotOverlayLabel(fontName: "Helvetica", size: 12)
     override var isFlipped: Bool { true }
@@ -62,6 +63,7 @@ final class ScreenshotSelectionView: NSView {
         toolOptions = nil
         viewport = nil; canvas = nil; border = nil; toolbar = nil; textBox = nil; textView = nil; textID = nil
         selection = nil; hoveredWindow = nil; start = nil; original = nil; handle = nil
+        magnifier?.removeFromSuperview(); magnifier = nil
         needsDisplay = true
     }
 
@@ -71,7 +73,7 @@ final class ScreenshotSelectionView: NSView {
         addTrackingArea(tracker); self.tracker = tracker
         super.updateTrackingAreas()
     }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: ScreenshotMagnifierView.cursor) }
 
     override func draw(_ dirtyRect: NSRect) {
         let image = NSImage(cgImage: display.image, size: bounds.size)
@@ -109,9 +111,31 @@ final class ScreenshotSelectionView: NSView {
     private func point(_ event: NSEvent) -> CGPoint { ScreenshotGeometry.clamp(convert(event.locationInWindow, from: nil), to: bounds.size) }
     private func globalPoint(_ local: CGPoint) -> CGPoint { CGPoint(x: display.frame.minX + local.x, y: display.frame.maxY - local.y) }
     func updateHover(globalPoint: CGPoint) {
+        let local = CGPoint(x: globalPoint.x - display.frame.minX, y: display.frame.maxY - globalPoint.y)
+        updateMagnifier(at: local)
         guard selection == nil, mode == .region else { return }
-        hoveredWindow = windows.first { $0.frame.contains(globalPoint) }; needsDisplay = true
+        let next = windows.first { $0.frame.contains(globalPoint) }
+        if next?.id != hoveredWindow?.id { hoveredWindow = next; needsDisplay = true }
     }
+    private func updateMagnifier(at point: CGPoint) {
+        let overControls = ([toolbar, toolOptions, targetToolbar, textBox] as [NSView?]).compactMap { $0 }.contains { !$0.isHidden && $0.frame.contains(point) }
+        let overObjectHandle = canvas.map { $0.containsSelectionHandle($0.convert(point, from: self)) } ?? false
+        let nearCorner = selection.map { rect in ScreenshotGeometry.corners(rect).contains { hypot($0.x - point.x, $0.y - point.y) < 9 } } ?? false
+        let choosing = selection == nil && mode == .region
+        let adjusting = start != nil || nearCorner || document?.adjustingCrop == true
+        let onDisplay = point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY
+        guard onDisplay, !overControls, !overObjectHandle, textView == nil,
+              document?.exporting != true, windowCaptureTask == nil,
+              bounds.width >= ScreenshotMagnifierGeometry.size.width + 16,
+              bounds.height >= ScreenshotMagnifierGeometry.size.height + 16,
+              choosing || adjusting else { magnifier?.isHidden = true; return }
+        if magnifier == nil {
+            let view = ScreenshotMagnifierView(image: document?.source ?? display.image, displaySize: bounds.size)
+            addSubview(view, positioned: .above, relativeTo: nil); magnifier = view
+        }
+        magnifier?.update(at: point, in: bounds)
+    }
+    override func mouseExited(with event: NSEvent) { magnifier?.isHidden = true }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseMoved(with event: NSEvent) {
         if window?.isKeyWindow == false { window?.makeKey(); window?.makeFirstResponder(self) }
@@ -147,6 +171,7 @@ final class ScreenshotSelectionView: NSView {
                 hoveredWindow = windows.first { $0.frame.contains(globalPoint(p)) }
             }
         } else { updateHover(globalPoint: globalPoint(p)) }
+        updateMagnifier(at: p)
     }
     override func mouseDragged(with event: NSEvent) {
         guard let start, document?.exporting != true else { return }
@@ -163,11 +188,13 @@ final class ScreenshotSelectionView: NSView {
         } else { selection = ScreenshotGeometry.rect(start, p) }
         toolbar?.isHidden = true
         targetToolbar?.isHidden = true
+        updateMagnifier(at: p)
         updateLayout(); needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
         guard start != nil else { return }
         start = nil
+        magnifier?.isHidden = true
         if !dragged, original == nil {
             if mode == .display { selection = bounds }
             else if let hoveredWindow {
@@ -208,6 +235,7 @@ final class ScreenshotSelectionView: NSView {
     }
 
     private func installDocument(source: CGImage) {
+        magnifier?.removeFromSuperview(); magnifier = nil
         observation = nil; document?.close()
         viewport?.removeFromSuperview(); toolbar?.removeFromSuperview(); toolOptions?.removeFromSuperview(); border?.removeFromSuperview()
         toolbarObservation = nil; toolbarState.showsOptions = false
@@ -221,6 +249,7 @@ final class ScreenshotSelectionView: NSView {
         canvas.saveImage = { [weak self] in self?.export(save: true) }
         canvas.cancel = { [weak self] in self?.dismissOptionsOrFinish() }
         canvas.beginInteraction = { [weak self] in
+            self?.magnifier?.isHidden = true
             self?.toolbarState.showsOptions = false
             self?.commitText()
         }
@@ -279,6 +308,7 @@ final class ScreenshotSelectionView: NSView {
 
     private func syncDocumentUI() {
         guard let document else { return }
+        if (!document.adjustingCrop && start == nil) || document.textDraft != nil || document.exporting { magnifier?.isHidden = true }
         if let draft = document.textDraft, textID != draft.id { showText(draft) }
         if let draft = document.textDraft, let textView {
             let font = NSFont.systemFont(ofSize: draft.style.fontSize * bounds.width / display.size.width, weight: .semibold)
@@ -340,6 +370,7 @@ final class ScreenshotSelectionView: NSView {
 
     func export(save: Bool) {
         guard let document, !document.exporting, let window else { return }
+        magnifier?.isHidden = true
         commitText(); document.exporting = true; document.error = nil
         exportTask = Task { [weak self] in
             guard let self else { return }
@@ -403,7 +434,7 @@ final class ScreenshotSelectionView: NSView {
 /// AppKit drawing path crashed in TAttributes::ApplyFont while resolving the system
 /// monospace font on macOS 26.5.1. Keep that path out of overlay redraws entirely.
 @MainActor
-private final class ScreenshotOverlayLabel {
+final class ScreenshotOverlayLabel {
     private let font: CTFont
     private var cachedText: String?
     private var cachedLine: CTLine?

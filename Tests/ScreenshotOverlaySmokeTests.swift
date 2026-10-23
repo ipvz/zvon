@@ -113,6 +113,14 @@ struct ScreenshotOverlaySmokeTests {
                     precondition((panel.firstResponder as? NSTextView)?.font?.pointSize == 24, "Retina font controls must update the live editor")
                     key("\r", code: 36)
                     precondition(view.document?.textDraft == nil && view.document?.annotations.last?.text == "Проверка", "Enter must commit text instead of exporting")
+                case 14:
+                    let corner = view.selection!.origin
+                    view.mouseDown(with: event(.leftMouseDown, corner))
+                    view.mouseDragged(with: event(.leftMouseDragged, CGPoint(x: corner.x - 10, y: corner.y - 10)))
+                case 15:
+                    precondition(view.magnifier?.isHidden == false, "Deferred document updates must not hide the loupe during crop resizing")
+                    view.mouseUp(with: event(.leftMouseUp, CGPoint(x: 70, y: 70)))
+                    precondition(view.magnifier?.isHidden == true, "Finishing resize must hide the loupe")
                 case 18: view.resetSelection()
                 case 19: view.updateHover(globalPoint: CGPoint(x: 100, y: 100))
                 case 23:
