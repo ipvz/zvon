@@ -36,7 +36,7 @@ actor SpeechPipeline {
         await engine.setLanguage(language.flatMap(Language.parley))
         guard !session.isStopped else { return }
 
-        let onEvent = self.onEvent
+        let onEvent = self.onEvent, onStatus = self.onStatus
         let micSource = MicAudioSource()
         if let recorder { micSource.onSamples = { recorder.append($0, from: .me) } }
         let mic = UtteranceTranscriber(
@@ -46,6 +46,7 @@ actor SpeechPipeline {
             // closes it anyway) so a mid-sentence pause isn't mistaken for the end.
             config: dictation ? .dictation : UtteranceTranscriber.Config(),
             session: session,
+            onReady: { await onStatus(.listening) },
             onEvent: { event in await onEvent(.me, event) }
         )
 
@@ -61,7 +62,6 @@ actor SpeechPipeline {
             )
         }
 
-        await onStatus(.listening)
         DebugLog.log("pipeline.start → streams (mic\(sys != nil ? " + system" : ""))")
 
         // The mic is essential: propagate its failure (e.g. denied microphone permission) so the

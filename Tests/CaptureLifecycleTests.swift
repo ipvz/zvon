@@ -48,6 +48,9 @@ final class FakeAudioSource: LiveAudioSource, @unchecked Sendable {
 final class Events: @unchecked Sendable {
     private let lock = NSLock()
     private var finals: [String] = []
+    private var readyCount = 0
+    func ready() { lock.lock(); readyCount += 1; lock.unlock() }
+    var readiness: Int { lock.lock(); defer { lock.unlock() }; return readyCount }
     func receive(_ event: TranscriptionEvent) {
         if case .final(let text, _, _) = event {
             lock.lock(); finals.append(text); lock.unlock()
@@ -83,6 +86,17 @@ final class Events: @unchecked Sendable {
         precondition(earlySource.counts.starts == 0)
         print("PASS: stop before stream construction stays stopped")
 
+        let emptySession = CaptureSession()
+        let emptySource = FakeAudioSource()
+        let emptyEvents = Events()
+        let empty = UtteranceTranscriber(decode: { _ in ("", 1) }, source: emptySource,
+            session: emptySession, onReady: { emptyEvents.ready() }, onEvent: { event in
+                if case .meter = event { emptySession.stop() }
+            })
+        try await empty.run()
+        precondition(emptyEvents.readiness == 0, "An opened device without audio must never report listening")
+        print("PASS: microphone readiness waits for actual samples")
+
         for _ in 0..<100 {
             let session = CaptureSession()
             let source = FakeAudioSource(onStart: { session.stop() })
@@ -100,7 +114,11 @@ final class Events: @unchecked Sendable {
             precondition(activeSource.counts.stops == 1, "mic must close before final decoding")
             precondition(samples.count == 8_000, "release must retain the entire short utterance")
             return ("Проверка записи", 0.99)
-        }, source: activeSource, config: .dictation, session: activeSession, onEvent: { event in
+        }, source: activeSource, config: .dictation, session: activeSession,
+        onReady: {
+            precondition(activeSource.counts.starts == 1 && !activeSource.snapshotSamples().isEmpty)
+            events.ready()
+        }, onEvent: { event in
             if case .final = event { try? await Task.sleep(nanoseconds: 100_000_000) }
             events.receive(event)
             if case .meter = event { activeSession.stop() }
@@ -108,13 +126,15 @@ final class Events: @unchecked Sendable {
         try await active.run()
         precondition(events.texts == ["Проверка записи"])
         precondition(activeSource.counts.stops == 1)
+        precondition(events.readiness == 1)
         print("PASS: normal release waits for slow final delivery and closes capture before decoding")
 
         let longSession = CaptureSession()
         let longSource = FakeAudioSource(samples: [Float](repeating: 0.03, count: 16_000))
         let longEvents = Events()
-        let longStream = UtteranceTranscriber(decode: { _ in
+        let longStream = UtteranceTranscriber(decode: { samples in
             precondition(longSource.counts.stops == 1, "dictation must not waste work on invisible previews")
+            precondition(samples.count == 16_000, "Delayed VAD onset must retain the prefix captured from key press")
             return ("Длинная фраза", 0.99)
         }, source: longSource, config: .dictation, session: longSession, onEvent: { longEvents.receive($0) })
         let release = Task {
@@ -125,6 +145,37 @@ final class Events: @unchecked Sendable {
         try await release.value
         precondition(longEvents.texts == ["Длинная фраза"])
         print("PASS: dictation avoids repeated previews and still emits the complete final")
+
+        let delayedSession = CaptureSession()
+        let prefix = [Float](repeating: 0.03, count: 8_000)
+        let delayedSource = FakeAudioSource(samples: prefix + [Float](repeating: 0, count: 56_000))
+        let delayedEvents = Events()
+        let delayed = UtteranceTranscriber(decode: { samples in
+            precondition(samples.count == 64_000 && Array(samples.prefix(8_000)) == prefix,
+                         "A short first word must survive even if the first VAD observation sees only later silence")
+            return ("Первое слово", 0.99)
+        }, source: delayedSource, config: .dictation, session: delayedSession, onEvent: { event in
+            delayedEvents.receive(event)
+            if case .meter = event { delayedSession.stop() }
+        })
+        try await delayed.run()
+        precondition(delayedEvents.texts == ["Первое слово"])
+        print("PASS: first word retained across delayed VAD and trailing silence")
+
+        let silentSession = CaptureSession()
+        let silentSource = FakeAudioSource(samples: [Float](repeating: 0, count: 48_000))
+        var bounded = UtteranceTranscriber.Config.dictation
+        bounded.maxUtterance = 1
+        let silent = UtteranceTranscriber(decode: { _ in
+            preconditionFailure("Silence must not be sent to the model")
+        }, source: silentSource, config: bounded, session: silentSession, onEvent: { event in
+            if case .meter = event {
+                precondition(silentSource.snapshotSamples().count <= 4_801, "Silent dictation must retain only bounded overlap")
+                silentSession.stop()
+            }
+        })
+        try await silent.run()
+        print("PASS: silence-only dictation stays bounded without decoding noise")
 
         let freshSession = CaptureSession()
         let freshSource = FakeAudioSource(onStart: { freshSession.stop() })

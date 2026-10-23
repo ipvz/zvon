@@ -998,9 +998,10 @@ final class TranscriptStore: ObservableObject {
     private func launchRunTask(reset: Bool) {
         let prior = runTask
         let dict = dictating            // capture THIS session's mode (a prior finalize may clear it)
-        let session = CaptureSession()
+        let session = CaptureSession(userInitiated: true)
         captureSession = session
-        runTask = Task { [weak self] in
+        runTask = Task(priority: .userInitiated) { [weak self] in
+            defer { session.finishActivity() }
             _ = await prior?.value      // drain the previous session fully (tail flush + finalize)
             guard let self else { return }
             if reset { self.resetSessionState() }

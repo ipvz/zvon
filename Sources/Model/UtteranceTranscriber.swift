@@ -33,6 +33,7 @@ actor UtteranceTranscriber {
     private let decodeFn: @Sendable ([Float]) async -> (text: String, confidence: Float)
     private let source: LiveAudioSource
     private let onEvent: @Sendable (TranscriptionEvent) async -> Void
+    private let onReady: @Sendable () async -> Void
     private let cfg: Config
     private let session: CaptureSession
     private let sr: Float = 16000
@@ -66,6 +67,7 @@ actor UtteranceTranscriber {
         source: LiveAudioSource,
         config: Config = Config(),
         session: CaptureSession = CaptureSession(),
+        onReady: @escaping @Sendable () async -> Void = {},
         onEvent: @escaping @Sendable (TranscriptionEvent) async -> Void
     ) {
         self.decodeFn = decode
@@ -73,12 +75,14 @@ actor UtteranceTranscriber {
         self.cfg = config
         self.session = session
         self.onEvent = onEvent
+        self.onReady = onReady
     }
 
     func stop() { session.stop(); running = false }
 
     func run() async throws {
         guard !session.isStopped, !Task.isCancelled else { return }
+        let startTime = monotonicSeconds()
         try source.start()
         running = true
         DebugLog.log("utterance loop start")
@@ -90,6 +94,8 @@ actor UtteranceTranscriber {
         }
 
         var lastWall = monotonicSeconds()
+        var ready = false
+        var maxTickGap: Float = 0
         // Observe cancellation: when a sibling stream throws, the task group cancels this one. Without
         // the isCancelled checks the `try?`-swallowed sleep would busy-spin at 100% CPU, leak the audio
         // tap (source.stop() below never runs), and hang the group so the real error is never surfaced.
@@ -100,9 +106,15 @@ actor UtteranceTranscriber {
             let dt = Float(now - lastWall)
             guard dt >= Float(cfg.tick) else { continue }
             lastWall = now
+            maxTickGap = max(maxTickGap, dt)
 
             let samples = source.snapshotSamples()
             let energy = source.snapshotEnergy()
+            if !ready, !samples.isEmpty {
+                ready = true
+                DebugLog.log(String(format: "mic/source ready after %.0fms", (now - startTime) * 1000))
+                await onReady()
+            }
             let nowAbs = windowStartSample + samples.count
             guard samples.count > Int(0.2 * sr) else { await onEvent(.meter(energy)); continue }
 
@@ -122,7 +134,12 @@ actor UtteranceTranscriber {
                 if !inSpeech, speechRun >= 2 {
                     inSpeech = true
                     let backTicks = cfg.preRoll + Float(speechRun) * Float(cfg.tick)
-                    utteranceStartAbs = max(utteranceStartAbs, nowAbs - Int(backTicks * sr))
+                    // Push-to-talk starts at the key press, not at the VAD's second
+                    // observation. Under load those two ticks can be far apart;
+                    // rewinding a fixed 460ms used to discard the first spoken words.
+                    if !cfg.isDictation {
+                        utteranceStartAbs = max(utteranceStartAbs, nowAbs - Int(backTicks * sr))
+                    }
                     utterancePeakRMS = 0
                 }
                 if inSpeech {
@@ -145,7 +162,7 @@ actor UtteranceTranscriber {
                 silenceRun += dt
                 if inSpeech && silenceRun >= cfg.endpointSilence {
                     endpoint(endAbs: nowAbs - Int(silenceRun * sr), window: samples)
-                } else if !inSpeech {
+                } else if !inSpeech, !cfg.isDictation {
                     // Nobody speaking (endpoint() only purges while inSpeech): roll the buffer so a
                     // quiet room / listening-only participant can't grow the window unbounded.
                     let windowSec = Float(nowAbs - windowStartSample) / sr
@@ -158,6 +175,11 @@ actor UtteranceTranscriber {
                         }
                     }
                 }
+            }
+            // Keep a dictation's uncommitted prefix even if a delayed VAD tick
+            // observes silence after a short word. Still bound silence-only holds.
+            if cfg.isDictation, Float(nowAbs - utteranceStartAbs) / sr >= cfg.maxUtterance {
+                endpoint(endAbs: nowAbs, window: samples)
             }
             await onEvent(.meter(energy))
         }
@@ -172,6 +194,7 @@ actor UtteranceTranscriber {
         jobCont?.finish()
         await worker.value
         await onEvent(.ended)
+        DebugLog.log(String(format: "capture timing: max meter gap %.0fms", maxTickGap * 1000))
         DebugLog.log("utterance loop end")
     }
 

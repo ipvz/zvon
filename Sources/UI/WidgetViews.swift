@@ -711,12 +711,15 @@ struct ProcessingPill: View {
 /// вставить» + the trigger-key hint. When the input is silent it reads «Слушаю…» with grey bars.
 struct SpectrogramPill: View {
     @ObservedObject var store: TranscriptStore
-    private var speaking: Bool { (store.levels.suffix(6).max() ?? 0) > 0.05 }
+    private var ready: Bool { store.status == .listening }
+    private var speaking: Bool { ready && (store.levels.suffix(6).max() ?? 0) > 0.05 }
     var body: some View {
         HStack(spacing: 13) {
             if let g = Brand.pillGlyph { Image(nsImage: g).resizable().scaledToFit().frame(width: 24, height: 16) }
             PillLevelBars(levels: store.levels, speaking: speaking)
-            if speaking {
+            if !ready {
+                Text(L("Включаю микрофон…", "Starting microphone…")).font(.system(size: 12)).foregroundStyle(PillC.muted).fixedSize()
+            } else if speaking {
                 Text(L("Отпустите, чтобы вставить", "Release to insert")).font(.system(size: 12.5)).foregroundStyle(PillC.text).fixedSize()
                 Text(store.dictationTrigger.shortHint)
                     .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(PillC.muted).fixedSize()

@@ -5,6 +5,23 @@ import Foundation
 final class CaptureSession: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
+    private var activity: NSObjectProtocol?
+
+    init(userInitiated: Bool = false) {
+        if userInitiated {
+            // A menu-bar app with nonactivating HUDs can otherwise enter App Nap
+            // during capture: async work and meter timers then run in long bursts.
+            activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep,
+                                                            reason: "Record and transcribe user audio")
+        }
+    }
+
+    func finishActivity() {
+        lock.lock(); let token = activity; activity = nil; lock.unlock()
+        if let token { ProcessInfo.processInfo.endActivity(token) }
+    }
+
+    deinit { finishActivity() }
 
     var isStopped: Bool {
         lock.lock(); defer { lock.unlock() }

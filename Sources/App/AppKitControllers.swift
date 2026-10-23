@@ -422,26 +422,37 @@ final class DictationHoldController {
     private var held = false
     private var otherKey = false
     private var startWork: DispatchWorkItem?
+    private var triggerActivity: NSObjectProtocol?
     private static let holdDelay = 0.10   // modifier held alone before dictation starts — short so the
                                           // first word isn't lost; a chord's 2nd key still cancels via otherKeyDown
 
     init(store: TranscriptStore) {
         self.store = store
+        // AppKit documents both event monitors as main-thread callbacks. Do not
+        // defer a key transition to another Task: App Nap can delay that hop.
         monitors.append(NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
-            Task { @MainActor in self?.flagsChanged(e) }
+            MainActor.assumeIsolated { self?.flagsChanged(e) }
         } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
-            Task { @MainActor in self?.flagsChanged(e) }; return e
+            MainActor.assumeIsolated { self?.flagsChanged(e) }; return e
         } as Any)
         monitors.append(NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
-            Task { @MainActor in self?.otherKeyDown() }
+            MainActor.assumeIsolated { self?.otherKeyDown() }
         } as Any)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
-            Task { @MainActor in self?.otherKeyDown() }; return e
+            MainActor.assumeIsolated { self?.otherKeyDown() }; return e
         } as Any)
     }
 
-    deinit { monitors.forEach { NSEvent.removeMonitor($0) } }
+    deinit {
+        monitors.forEach { NSEvent.removeMonitor($0) }
+        if let triggerActivity { ProcessInfo.processInfo.endActivity(triggerActivity) }
+    }
+
+    private func finishTriggerActivity() {
+        if let triggerActivity { ProcessInfo.processInfo.endActivity(triggerActivity) }
+        triggerActivity = nil
+    }
 
     private func flagsChanged(_ e: NSEvent) {
         guard let kc = store.dictationTrigger.keyCode, e.keyCode == kc else { return }
@@ -453,8 +464,12 @@ final class DictationHoldController {
                 store.toggleDictation()
                 return
             }
+            triggerActivity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep,
+                                                                   reason: "Respond to dictation hold key")
             let work = DispatchWorkItem { [weak self] in
-                guard let self, self.held, !self.otherKey else { return }
+                guard let self else { return }
+                defer { self.finishTriggerActivity() }
+                guard self.held, !self.otherKey else { return }
                 self.store.startDictation()
             }
             startWork = work
@@ -462,6 +477,7 @@ final class DictationHoldController {
         } else if !pressed && held {
             held = false
             startWork?.cancel()
+            finishTriggerActivity()
             if store.dictationMode == .hold, store.isDictating { store.stopDictation() }
         }
     }
@@ -471,6 +487,7 @@ final class DictationHoldController {
         guard held else { return }
         otherKey = true
         startWork?.cancel()
+        finishTriggerActivity()
         if store.isDictating { store.stopDictation() }
     }
 }
