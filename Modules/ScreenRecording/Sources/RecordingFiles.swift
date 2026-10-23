@@ -24,6 +24,9 @@ enum RecordingFiles {
         }
     }
     static func export(_ draft: URL, to destination: URL) async throws {
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw RecordingFailure.message("Файл с таким именем уже существует. Исходная запись сохранена.")
+        }
         let asset = AVURLAsset(url: draft)
         let tracks = try await asset.loadTracks(withMediaType: .video)
         guard !tracks.isEmpty, try await asset.load(.duration).seconds > 0 else {

@@ -30,6 +30,17 @@ enum TextInserter {
     /// Let the pasteboard write settle and the trigger key finish releasing before ⌘V goes out.
     private static let pasteDelay: TimeInterval = 0.05
 
+    static var hasPendingInsertion: Bool { pendingPaste != nil || pendingRestore != nil }
+
+    /// Keep the process alive until the posted paste and clipboard restoration
+    /// settle. Quitting immediately after dictation otherwise loses the original clipboard.
+    @MainActor static func finishBeforeQuit() async {
+        while hasPendingInsertion {
+            do { try await Task.sleep(for: .milliseconds(50)) }
+            catch { return }
+        }
+    }
+
     @discardableResult
     static func insert(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

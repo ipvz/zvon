@@ -123,6 +123,9 @@ final class RecordingWriter: @unchecked Sendable {
     }
     func tick() {
         guard !finishing, error == nil, !isPaused else { return }
+        guard writer.status == .writing else {
+            fail(writer.error ?? RecordingFailure.message("Кодировщик остановился. Черновик записи сохранён.")); return
+        }
         flushAudio(until: timeline.seconds(at: clock() - 0.25))
         // The desktop may not produce another frame for minutes. Advance its last image
         // periodically so fragment recovery and the final video include stationary time.
@@ -172,9 +175,19 @@ final class RecordingWriter: @unchecked Sendable {
             completion(.failure(error ?? RecordingFailure.message("Источник не прислал видеокадры. Запись не началась."))); return
         }
         let deadline = Self.now + 4
+        func interrupted() -> Bool {
+            guard self.writer.status != .writing else { return false }
+            self.lastFrame = nil; self.converters.removeAll()
+            completion(.failure(self.writer.error ?? self.error ?? RecordingFailure.message("Запись прервана. Черновик сохранён.")))
+            return true
+        }
         func drain() {
+            // Status can change while an asynchronous backpressure retry is queued.
+            // markAsFinished/endSession on a cancelled writer raise NSException.
+            guard !interrupted() else { return }
             self.flushAudio(until: end)
             self.extendLastFrame(to: max(0, end - 1.0 / 600))
+            guard !interrupted() else { return }
             let audioReady = self.audio == nil || self.audioEnd >= end - 1.0 / 48_000
             let videoReady = self.lastVideoTime >= end - 1.0 / 300
             if (!audioReady || !videoReady), self.writer.status == .writing, Self.now < deadline {

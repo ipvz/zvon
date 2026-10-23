@@ -164,12 +164,50 @@ struct RecordingTests {
         try child.run(); child.waitUntilExit()
         require(child.terminationStatus == 0, "Interrupted recorder fixture")
         let interrupted = directory.appendingPathComponent("interrupted.mov")
+        let existing = directory.appendingPathComponent("existing.mp4")
+        let sentinel = Data("existing file must survive".utf8)
+        try sentinel.write(to: existing)
+        do {
+            try await RecordingFiles.export(interrupted, to: existing)
+            fatalError("Export must not overwrite an existing file")
+        } catch {
+            let preserved = try Data(contentsOf: existing)
+            require(preserved == sentinel && FileManager.default.fileExists(atPath: interrupted.path),
+                    "Failed export must preserve both the existing destination and recoverable draft")
+        }
+        print("PASS: export collision preserves existing file and source draft")
         let recovered = directory.appendingPathComponent("recovered.mp4")
         try? FileManager.default.removeItem(at: recovered)
         try await RecordingFiles.export(interrupted, to: recovered)
         let recoveredDuration = try await AVURLAsset(url: recovered).load(.duration).seconds
         require(recoveredDuration >= 2, "Completed fragments must survive process death")
         print("PASS: recovered playable MP4 after process death, duration \(recoveredDuration)")
+
+        // Force a terminal writer state BETWEEN asynchronous drain retries. The
+        // previous implementation called markAsFinished on a cancelled input and
+        // raised an Objective-C exception instead of returning a recoverable error.
+        let cancelledURL = directory.appendingPathComponent("cancelled.mov")
+        try? FileManager.default.removeItem(at: cancelledURL)
+        var cancelledClock = 100.0
+        var cancelledWriter: RecordingWriter? = try RecordingWriter(url: cancelledURL, width: 320, height: 180,
+            audioEnabled: true, fps: 30, clock: { cancelledClock })
+        weak var releasedWriter = cancelledWriter
+        cancelledWriter!.receiveVideo(imageSample(at: 100))
+        require(cancelledWriter!.videoFrames == 1, "Fault fixture must contain a video frame")
+        cancelledClock = 104 // Force an audio backpressure retry before finalizing.
+        let queue = DispatchQueue(label: "test.video.interrupted-finalize")
+        let failed: Result<URL, Error> = await withCheckedContinuation { continuation in
+            let recorder = cancelledWriter!
+            queue.async {
+                recorder.finish(on: queue) { continuation.resume(returning: $0) }
+                recorder.writer.cancelWriting()
+            }
+        }
+        if case .success = failed { fatalError("Cancelled writer must return a failure") }
+        cancelledWriter = nil
+        for _ in 0..<100 where releasedWriter != nil { try await Task.sleep(for: .milliseconds(10)) }
+        require(releasedWriter == nil, "Failed finalization must release the writer and its callbacks")
+        print("PASS: writer cancelled during finalization returns an error and releases resources")
 
     }
 }

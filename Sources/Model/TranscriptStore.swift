@@ -149,9 +149,12 @@ final class TranscriptStore: ObservableObject {
 
     private var pipeline: SpeechPipeline!
     private var runTask: Task<Void, Never>?
+    private var dictationInsertTask: Task<Void, Never>?
     private var captureSession: CaptureSession?
     private var prepareTask: Task<Void, Never>?
     private var stopping = false               // a stop was requested → finalize on stream end
+    private var quitting = false
+    var hasActiveCaptureWork: Bool { isRecording || stopping || dictationInsertTask != nil }
     private var pendingSegmentAdvance: Double = 0   // paused segment's duration, applied on resume
     private(set) var currentSessionId = UUID() // links live tasks/session to the archived record
 
@@ -975,7 +978,7 @@ final class TranscriptStore: ObservableObject {
 
     func start() {
         // The previous session still owns its transcript until the tail has drained.
-        guard !stopping else { return }
+        guard !stopping, !quitting else { return }
         if isRecording {
             // Record pressed while a DICTATION is active/stuck (its key-release can be missed, e.g. an
             // accidental modifier trigger during typing — then it never stops and holds isRecording, so
@@ -1146,6 +1149,7 @@ final class TranscriptStore: ObservableObject {
             isRecording = false
             isPaused = false
             stopping = false
+            if !dictating { finishMeetingArchive() }
             recordingStartedAt = nil
             if dictating { dictating = false; isDictating = false }   // A4: don't leave the HUD/mic stuck
         }
@@ -1197,6 +1201,19 @@ final class TranscriptStore: ObservableObject {
 
     func togglePause() { isPaused ? resume() : pause() }
 
+    /// App termination must wait for the audio tail, archive and pending dictation
+    /// insertion, just as it already waits for the video container to be finalized.
+    func finishBeforeQuit() async {
+        quitting = true
+        startAfterDictation = false
+        if isRecording { stop() }
+        await runTask?.value
+        // stop() also has a waiter. MainActor + the stopping guard makes finalizing
+        // idempotent whichever continuation resumes first.
+        if stopping { finalizeStoppedSession(isDictation: dictating) }
+        await dictationInsertTask?.value
+    }
+
     /// Finalize a stopped session once its stream has fully drained.
     private func finalizeStoppedSession(isDictation: Bool) {
         stopping = false
@@ -1204,12 +1221,7 @@ final class TranscriptStore: ObservableObject {
         if isDictation {
             finishDictation()          // insert + archive dictation, clears dictating/isDictating
         } else {
-            // Close the audio BEFORE archiving: the archive row is what the UI checks for a
-            // playable file, and a half-written container is not one. A session with no lines
-            // isn't archived, so its audio would be orphaned — drop it instead.
-            if finals.isEmpty { audioRecorder?.discard() } else { audioRecorder?.finish() }
-            audioRecorder = nil
-            archiveMeeting()
+            finishMeetingArchive()
         }
         recordingStartedAt = nil
         status = .idle
@@ -1217,6 +1229,14 @@ final class TranscriptStore: ObservableObject {
             startAfterDictation = false
             start()
         }
+    }
+
+    private func finishMeetingArchive() {
+        // Also used after a capture failure: never carry a half-open file into
+        // the next meeting, and preserve already-transcribed audio on failure.
+        if finals.isEmpty { audioRecorder?.discard() } else { audioRecorder?.finish() }
+        audioRecorder = nil
+        archiveMeeting()
     }
 
     private func archiveMeeting() {
@@ -1241,7 +1261,7 @@ final class TranscriptStore: ObservableObject {
 
     /// Hotkey pressed: start a mic-only session whose text we insert on release.
     func startDictation() {
-        guard !isRecording, !stopping, !dictationProcessing, stage == .ready else {
+        guard !quitting, !isRecording, !stopping, !dictationProcessing, stage == .ready else {
             DebugLog.log("dictation ignored: recording=\(isRecording) stage=\(stage)")
             return
         }
@@ -1323,11 +1343,12 @@ final class TranscriptStore: ObservableObject {
             let hint = aiDictationStyle.hint
             let raw = text
             DebugLog.log("dictation AI polish start (\(raw.count) chars, style=\(aiDictationStyle.rawValue))")
-            Task { [weak self] in
+            dictationInsertTask = Task { [weak self] in
                 let t0 = Date()
                 let result = await Self.polishWithTimeout(raw, cfg: cfg, hint: hint,
                                                          glossary: GlossaryStore.shared.promptFragment)
                 guard let self else { return }
+                defer { self.dictationInsertTask = nil }
                 let polished = result.text
                 self.dictationProcessing = false
                 self.dictationError = result.error?.localizedDescription

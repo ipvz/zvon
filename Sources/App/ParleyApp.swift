@@ -104,9 +104,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let video = VideoRecordingFeature.shared.controller
-        guard video.isBusy else { return .terminateNow }
+        let store = TranscriptStore.shared
+        guard video.isBusy || store.hasActiveCaptureWork || TextInserter.hasPendingInsertion else { return .terminateNow }
         Task {
-            await video.finishBeforeQuit()
+            let activity = ProcessInfo.processInfo.beginActivity(options: .userInitiatedAllowingIdleSystemSleep,
+                                                                reason: "Finish recordings before quitting")
+            defer { ProcessInfo.processInfo.endActivity(activity) }
+            async let videoFinished: Void = video.finishBeforeQuit()
+            async let audioFinished: Void = store.finishBeforeQuit()
+            _ = await (videoFinished, audioFinished)
+            await TextInserter.finishBeforeQuit()
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
