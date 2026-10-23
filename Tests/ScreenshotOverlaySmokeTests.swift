@@ -7,6 +7,60 @@ struct ScreenshotOverlaySmokeTests {
     @MainActor static func main() {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+        Task { @MainActor in
+            await activationAndRestart()
+            startDrawingSmoke()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 30) {
+            fputs("FAIL: native overlay smoke test timed out\n", stderr); exit(1)
+        }
+        app.run()
+    }
+
+    @MainActor static func activationAndRestart() async {
+        let context = CGContext(data: nil, width: 400, height: 240, bitsPerComponent: 8, bytesPerRow: 1600,
+            space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let display = ScreenshotDisplay(id: 1, frame: CGRect(x: 40, y: 40, width: 200, height: 120), image: context.makeImage()!)
+        let capture = DelayedCapture(environment: ScreenshotEnvironment(displays: [display], windows: []))
+        let controller = ScreenshotController(capture: capture)
+        let foreground = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        func panels() -> [ScreenshotSelectionPanel] { NSApp.windows.compactMap { $0 as? ScreenshotSelectionPanel }.filter { $0.isVisible } }
+        func settle() async { try? await Task.sleep(for: .milliseconds(40)) }
+
+        controller.start(); controller.start()
+        await settle()
+        precondition(capture.pending.count == 1, "Repeated shortcut must not start parallel captures")
+        controller.cancelCapture(); controller.start()
+        await settle()
+        precondition(capture.pending.count == 2, "Cancel must allow an immediate new capture")
+        capture.completeFirst(); await settle()
+        precondition(panels().isEmpty, "Late cancelled capture must not open an overlay")
+        capture.completeFirst(); await settle()
+        precondition(panels().count == 1, "Replacement capture must survive old task cleanup")
+        let panel = panels()[0]
+        precondition(panel.styleMask.contains(.nonactivatingPanel) && !panel.hidesOnDeactivate,
+                     "Overlay must take keyboard focus without activating or hiding with the application")
+        precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == foreground,
+                     "Opening capture must not activate the screenshot application")
+        panel.orderOut(nil)
+        controller.start(); await settle()
+        precondition(panels().first === panel && capture.pending.isEmpty,
+                     "Repeated shortcut must recover the same hidden overlay")
+        for _ in 0..<15 {
+            controller.cancelCapture(); controller.start(); await settle()
+            precondition(capture.pending.count == 1, "Rapid restart must create one request")
+            capture.completeFirst(); await settle()
+            precondition(panels().count == 1, "Old cancellation must not dismiss the new overlay")
+        }
+        controller.cancelCapture(); await settle()
+        precondition(panels().isEmpty, "Cancel must release all overlays")
+        precondition(NSWorkspace.shared.frontmostApplication?.processIdentifier == foreground,
+                     "Closing capture must not bring another application forward")
+        print("PASS: nonactivating capture, hidden-overlay recovery, late callbacks and 15 immediate restarts")
+    }
+
+    @MainActor static func startDrawingSmoke() {
+        let app = NSApplication.shared
         let context = CGContext(data: nil, width: 1000, height: 600, bitsPerComponent: 8, bytesPerRow: 4000,
             space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.setFillColor(CGColor(gray: 0.3, alpha: 1))
@@ -71,9 +125,17 @@ struct ScreenshotOverlaySmokeTests {
             }
         }
         RunLoop.main.add(timer, forMode: .common)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 20) {
-            fputs("FAIL: native overlay smoke test timed out\n", stderr); exit(1)
-        }
-        app.run()
     }
+}
+
+@MainActor private final class DelayedCapture: ScreenshotCapturing {
+    let environment: ScreenshotEnvironment
+    var pending: [CheckedContinuation<ScreenshotEnvironment, Error>] = []
+    init(environment: ScreenshotEnvironment) { self.environment = environment }
+    func prepare() async throws -> ScreenshotEnvironment {
+        // Deliberately ignore cancellation to model an in-flight system callback.
+        try await withCheckedThrowingContinuation { pending.append($0) }
+    }
+    func completeFirst() { pending.removeFirst().resume(returning: environment) }
+    func capture(window: ScreenshotWindow) async throws -> CGImage { environment.displays[0].image }
 }

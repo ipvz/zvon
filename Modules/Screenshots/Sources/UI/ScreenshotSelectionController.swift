@@ -4,18 +4,19 @@ import AppKit
 final class ScreenshotSelectionController {
     private var panels: [ScreenshotSelectionPanel] = []
     private var continuation: CheckedContinuation<Void, Error>?
-    private var previousApp: NSRunningApplication?
+    private var sessionID: UUID?
 
     func run(mode: ScreenshotCaptureMode, environment: ScreenshotEnvironment,
              captureWindow: @escaping (ScreenshotWindow) async throws -> CGImage,
              targetToolbar: ((@escaping () -> Void) -> NSView)? = nil,
              selectedTarget: ((ScreenCaptureTarget) -> Void)? = nil) async throws {
         try Task.checkCancellation()
+        let sessionID = UUID()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 guard !Task.isCancelled else { continuation.resume(); return }
                 self.continuation = continuation
-                previousApp = NSWorkspace.shared.frontmostApplication
+                self.sessionID = sessionID
                 for display in environment.displays {
                     let panel = ScreenshotSelectionPanel(contentRect: display.frame, styleMask: [.borderless], backing: .buffered, defer: false)
                     panel.identifier = NSUserInterfaceItemIdentifier("zvon.screenshot.selection")
@@ -27,9 +28,9 @@ final class ScreenshotSelectionController {
                     view.captureWindow = captureWindow
                     view.targetToolbarFactory = targetToolbar
                     view.selectedTarget = { [weak self] target in
-                        selectedTarget?(target); self?.finish()
+                        selectedTarget?(target); self?.finish(sessionID: sessionID)
                     }
-                    view.finish = { [weak self] in self?.finish() }
+                    view.finish = { [weak self] in self?.finish(sessionID: sessionID) }
                     view.didSelect = { [weak self, weak view] in
                         guard let self else { return }
                         for panel in panels {
@@ -42,7 +43,6 @@ final class ScreenshotSelectionController {
                     panel.contentView = view; panel.setFrame(display.frame, display: true)
                     panels.append(panel); panel.orderFrontRegardless()
                 }
-                NSApp.activate(ignoringOtherApps: true)
                 let active = panels.first { $0.frame.contains(NSEvent.mouseLocation) } ?? panels.first
                 active?.makeKey(); active?.makeFirstResponder(active?.contentView)
                 for panel in panels {
@@ -50,24 +50,38 @@ final class ScreenshotSelectionController {
                     view.updateHover(globalPoint: NSEvent.mouseLocation)
                 }
             }
-        } onCancel: { Task { @MainActor [weak self] in self?.finish() } }
+        } onCancel: { Task { @MainActor [weak self] in self?.finish(sessionID: sessionID) } }
     }
 
     func cancel() { finish() }
-    private func finish() {
+    func bringForward() {
+        // Repeated shortcuts recover focus without activating the application or
+        // replacing the selection, annotations, or an in-progress text edit.
+        for panel in panels { panel.orderFrontRegardless() }
+        let active = panels.first { $0.frame.contains(NSEvent.mouseLocation) } ?? panels.first
+        if active?.isKeyWindow == false { active?.makeKey() }
+    }
+    private func finish(sessionID expected: UUID? = nil) {
+        if let expected, expected != sessionID { return }
         guard let continuation else { return }
-        self.continuation = nil
+        self.continuation = nil; sessionID = nil
         for panel in panels {
             (panel.contentView as? ScreenshotSelectionView)?.resetSelection()
             panel.orderOut(nil); panel.contentView = nil; panel.close()
         }
         panels.removeAll()
-        previousApp?.activate(options: []); previousApp = nil
         continuation.resume()
     }
 }
 
 final class ScreenshotSelectionPanel: NSPanel {
+    override init(contentRect: NSRect, styleMask: NSWindow.StyleMask, backing: NSWindow.BackingStoreType, defer flag: Bool) {
+        // A key nonactivating panel receives typing without raising the app's
+        // document windows or switching away from the user's current Space.
+        super.init(contentRect: contentRect, styleMask: styleMask.union(.nonactivatingPanel), backing: backing, defer: flag)
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+    }
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
     override func sendEvent(_ event: NSEvent) {

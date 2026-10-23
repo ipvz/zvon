@@ -6,27 +6,36 @@ public final class ScreenshotController {
     private let capture: any ScreenshotCapturing
     private let selector = ScreenshotSelectionController()
     private var captureTask: Task<Void, Never>?
+    private var generation = 0
 
     public init() { capture = ScreenshotCaptureService() }
     init(capture: any ScreenshotCapturing) { self.capture = capture }
 
-    public func start(_ mode: ScreenshotCaptureMode = .region) {
-        guard captureTask == nil else { return }
+    public func start(_ mode: ScreenshotCaptureMode = .region, afterMenuDismissal: Bool = false) {
+        guard captureTask == nil else { selector.bringForward(); return }
+        generation += 1
+        let expected = generation
         captureTask = Task { [weak self] in
             guard let self else { return }
-            defer { captureTask = nil }
+            defer { if generation == expected { captureTask = nil } }
             do {
                 // Let menus/popovers disappear before collecting a frozen frame.
-                try await Task.sleep(for: .milliseconds(180))
+                // Global shortcuts have no menu to dismiss and start immediately.
+                if afterMenuDismissal { try await Task.sleep(for: .milliseconds(180)) }
                 let environment = try await capture.prepare()
+                try Task.checkCancellation()
                 try await selector.run(mode: mode, environment: environment, captureWindow: capture.capture)
             } catch is CancellationError {} catch {
-                showError(error)
+                if !Task.isCancelled { showError(error) }
             }
         }
     }
 
-    public func cancelCapture() { captureTask?.cancel(); selector.cancel() }
+    public func cancelCapture() {
+        generation += 1
+        let previous = captureTask; captureTask = nil
+        previous?.cancel(); selector.cancel()
+    }
 
     private func showError(_ error: Error) {
         let alert = NSAlert()

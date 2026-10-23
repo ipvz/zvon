@@ -25,16 +25,16 @@ final class ScreenshotFeature {
             }
             UserDefaults.standard.set(true, forKey: migration)
         }
-        KeyboardShortcuts.onKeyUp(for: .screenshotRegion) { [weak self] in self?.region() }
-        KeyboardShortcuts.onKeyUp(for: .screenshotDisplay) { [weak self] in self?.display() }
+        KeyboardShortcuts.onKeyDown(for: .screenshotRegion) { [weak self] in self?.region(fromShortcut: true) }
+        KeyboardShortcuts.onKeyDown(for: .screenshotDisplay) { [weak self] in self?.display(fromShortcut: true) }
     }
     func cancel() { controller.cancelCapture() }
-    func region() {
+    func region(fromShortcut: Bool = false) {
         guard !VideoRecordingFeature.shared.controller.isBusy else { return }
-        controller.start(.region)
+        controller.start(.region, afterMenuDismissal: !fromShortcut)
     }
-    func display() {
+    func display(fromShortcut: Bool = false) {
         guard !VideoRecordingFeature.shared.controller.isBusy else { return }
-        controller.start(.display)
+        controller.start(.display, afterMenuDismissal: !fromShortcut)
     }
 }
