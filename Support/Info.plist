@@ -23,9 +23,9 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>ZVON слушает микрофон, чтобы расшифровывать вашу речь в реальном времени.</string>
+	<string>ZVON использует микрофон для диктовки, расшифровки встреч и записи голоса в видео.</string>
 	<key>NSScreenCaptureUsageDescription</key>
-	<string>ZVON делает снимки выбранного экрана, окна или области для редактирования и сохранения на вашем Mac.</string>
+	<string>ZVON делает снимки и записывает видео выбранного экрана, окна или области. Файлы сохраняются на вашем Mac.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>ZVON записывает звук из динамика (собеседников на созвоне), чтобы расшифровывать их речь. Аудио не покидает ваш Mac.</string>
 	<key>NSRemindersUsageDescription</key>

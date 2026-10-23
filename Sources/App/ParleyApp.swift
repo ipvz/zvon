@@ -35,6 +35,13 @@ struct ParleyApp: App {
                 Button("Выделить область…") { ScreenshotFeature.shared.region() }
                 Button("Весь экран…") { ScreenshotFeature.shared.display() }
             }
+            CommandMenu("Видео") {
+                Button("Записать область или окно…") { VideoRecordingFeature.shared.region() }
+                Button("Записать весь экран…") { VideoRecordingFeature.shared.display() }
+                Divider()
+                Button("Пауза / продолжить") { VideoRecordingFeature.shared.controller.togglePause() }
+                Button("Остановить и сохранить") { VideoRecordingFeature.shared.controller.stop() }
+            }
             // Settings live INSIDE the main window (no separate window). Replace the default
             // "Settings…" (⌘,) so it just switches the main window to the settings page.
             CommandGroup(replacing: .appSettings) {
@@ -65,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         ScreenshotFeature.shared.registerShortcuts()
+        VideoRecordingFeature.shared.registerShortcuts()
         let store = TranscriptStore.shared
         menuBar = MenuBarController(store: store)
         widget = FloatingWidgetController(store: store)
@@ -92,6 +100,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             store.togglePause()
             return nil   // consume
         }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let video = VideoRecordingFeature.shared.controller
+        guard video.isBusy else { return .terminateNow }
+        Task {
+            await video.finishBeforeQuit()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     /// Closing the window keeps the app alive in the menu bar + floating widget (and any active

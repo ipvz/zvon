@@ -7,6 +7,7 @@ struct ScreenshotTests {
     @MainActor static func main() async throws {
         _ = NSApplication.shared
         let source = fixture()
+        try videoSelection(source)
         try geometry(source)
         try await rendering(source)
         try await historyAndGestures(source)
@@ -19,6 +20,44 @@ struct ScreenshotTests {
 
     static func expect(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         if !condition() { throw NSError(domain: "ScreenshotTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
+    }
+
+    @MainActor static func videoSelection(_ source: CGImage) throws {
+        for invalid in [-1, 0, Int.min, Int.max, Int(UInt32.max) + 1] {
+            try expect(ScreenCaptureTarget.validWindowID(invalid) == nil, "Unrealized AppKit windows must never trap during capture enumeration")
+        }
+        try expect(ScreenCaptureTarget.validWindowID(42) == 42, "Valid WindowServer identity is preserved")
+        let display = ScreenshotDisplay(id: 7, frame: CGRect(x: -500, y: -300, width: 500, height: 300), image: source)
+        let target = ScreenshotWindow(id: 42, frame: CGRect(x: -450, y: -220, width: 300, height: 160), title: "Window")
+        for mode in [ScreenshotCaptureMode.region, .display] {
+            let view = ScreenshotSelectionView(display: display, mode: mode, windows: [target])
+            let panel = ScreenshotSelectionPanel(contentRect: display.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+            panel.isReleasedWhenClosed = false; panel.contentView = view
+            var selected: ScreenCaptureTarget?
+            view.targetToolbarFactory = { _ in NSHostingView(rootView: Text("Record").frame(width: 200, height: 50)) }
+            view.selectedTarget = { selected = $0 }
+            func mouse(_ type: NSEvent.EventType, _ p: CGPoint) {
+                view.mouseDownIfNeeded(type, event: NSEvent.mouseEvent(with: type, location: view.convert(p, to: nil),
+                    modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1)!)
+            }
+            func confirm() {
+                view.keyDown(with: NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                    windowNumber: panel.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36)!)
+            }
+            mouse(.leftMouseDown, CGPoint(x: 100,y: 100)); mouse(.leftMouseUp, CGPoint(x: 100,y: 100)); confirm()
+            try expect(view.document == nil, "Video selection must never allocate an annotation document")
+            try expect(selected?.displayID == 7, "Display identity must survive negative global coordinates")
+            if mode == .region {
+                try expect(selected?.windowID == 42 && selected?.kind == .window, "Window click must preserve identity")
+            } else { try expect(selected?.kind == .display && selected?.pixelSize == CGSize(width: 1000,height: 600), "Display preset uses Retina pixels") }
+            let corner = view.selection!.maxX
+            let bottom = view.selection!.maxY
+            mouse(.leftMouseDown, CGPoint(x: corner,y: bottom)); mouse(.leftMouseDragged, CGPoint(x: corner-30,y: bottom-30)); mouse(.leftMouseUp, CGPoint(x: corner-30,y: bottom-30)); confirm()
+            try expect(selected?.kind == .region && selected?.windowID == nil, "Resizing window/display becomes a fixed region")
+            view.resetSelection(); panel.contentView = nil; panel.close()
+        }
+        print("PASS: shared video picker, window identity, display preset, Retina and resize-to-region")
     }
 
     @MainActor static func copyShortcuts(_ source: CGImage) async throws {
@@ -488,5 +527,15 @@ struct ScreenshotTests {
         document.textDraft = nil
         try expect(document.presentation.vectors.contains { $0.id == text.id }, "Cancelling text editing must restore original glyphs")
         document.close(); window.contentView = nil
+    }
+}
+
+private extension ScreenshotSelectionView {
+    func mouseDownIfNeeded(_ type: NSEvent.EventType, event: NSEvent) {
+        switch type {
+        case .leftMouseDown: mouseDown(with: event)
+        case .leftMouseDragged: mouseDragged(with: event)
+        default: mouseUp(with: event)
+        }
     }
 }

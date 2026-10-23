@@ -7,7 +7,9 @@ final class ScreenshotSelectionController {
     private var previousApp: NSRunningApplication?
 
     func run(mode: ScreenshotCaptureMode, environment: ScreenshotEnvironment,
-             captureWindow: @escaping (ScreenshotWindow) async throws -> CGImage) async throws {
+             captureWindow: @escaping (ScreenshotWindow) async throws -> CGImage,
+             targetToolbar: ((@escaping () -> Void) -> NSView)? = nil,
+             selectedTarget: ((ScreenCaptureTarget) -> Void)? = nil) async throws {
         try Task.checkCancellation()
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -23,6 +25,10 @@ final class ScreenshotSelectionController {
                     panel.acceptsMouseMovedEvents = true; panel.isReleasedWhenClosed = false
                     let view = ScreenshotSelectionView(display: display, mode: mode, windows: environment.windows)
                     view.captureWindow = captureWindow
+                    view.targetToolbarFactory = targetToolbar
+                    view.selectedTarget = { [weak self] target in
+                        selectedTarget?(target); self?.finish()
+                    }
                     view.finish = { [weak self] in self?.finish() }
                     view.didSelect = { [weak self, weak view] in
                         guard let self else { return }

@@ -61,9 +61,10 @@ final class ScreenshotCaptureService: ScreenshotCapturing {
         }
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         try Task.checkCancellation()
-        let excludedIDs = Set(NSApp.windows.filter {
-            $0 is NSPanel || $0.identifier?.rawValue.hasPrefix("zvon.screenshot") == true
-        }.map { CGWindowID($0.windowNumber) })
+        let excludedIDs = Set(NSApp.windows.compactMap { window -> CGWindowID? in
+            guard window is NSPanel || window.identifier?.rawValue.hasPrefix("zvon.screenshot") == true else { return nil }
+            return ScreenCaptureTarget.validWindowID(window.windowNumber)
+        })
         let excluded = content.windows.filter { excludedIDs.contains($0.windowID) }
         var displays: [ScreenshotDisplay] = []
         for screen in NSScreen.screens {

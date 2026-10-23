@@ -13,6 +13,10 @@ final class ScreenshotSelectionView: NSView {
     var didSelect: (() -> Void)?
     var saving: ((Bool) -> Void)?
     var captureWindow: ((ScreenshotWindow) async throws -> CGImage)?
+    var targetToolbarFactory: ((@escaping () -> Void) -> NSView)?
+    var selectedTarget: ((ScreenCaptureTarget) -> Void)?
+    private var targetToolbar: NSView?
+    private var selectedWindow: ScreenshotWindow?
     var copyScreenshot: (ScreenshotDocument) async throws -> Void = { try await ScreenshotExporter.copy($0) }
     private(set) var selection: CGRect?
     private(set) var hoveredWindow: ScreenshotWindow?
@@ -53,6 +57,7 @@ final class ScreenshotSelectionView: NSView {
         exportTask?.cancel(); exportTask = nil
         observation = nil; toolbarObservation = nil; toolbarState.showsOptions = false
         document?.close(); document = nil
+        targetToolbar?.removeFromSuperview(); targetToolbar = nil; selectedWindow = nil
         for view in [viewport, border, toolbar, toolOptions, textBox] as [NSView?] { view?.removeFromSuperview() }
         toolOptions = nil
         viewport = nil; canvas = nil; border = nil; toolbar = nil; textBox = nil; textView = nil; textID = nil
@@ -116,7 +121,7 @@ final class ScreenshotSelectionView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? {
         let p = convert(point, from: superview)
         if let toolOptions, !toolOptions.isHidden, toolOptions.frame.contains(p) { return super.hitTest(point) }
-        if toolbar?.frame.contains(p) == true || textBox?.frame.contains(p) == true { return super.hitTest(point) }
+        if targetToolbar?.frame.contains(p) == true || toolbar?.frame.contains(p) == true || textBox?.frame.contains(p) == true { return super.hitTest(point) }
         if document?.exporting == true { return self }
         // Object handles win over crop corners, even when a handle straddles the crop edge.
         if let canvas, canvas.containsSelectionHandle(canvas.convert(p, from: self)) { return canvas }
@@ -148,6 +153,7 @@ final class ScreenshotSelectionView: NSView {
         let p = point(event)
         guard dragged || hypot(p.x - start.x, p.y - start.y) >= 3 else { return }
         dragged = true
+        selectedWindow = nil
         if let original, let handle {
             selection = ScreenshotGeometry.rect(ScreenshotGeometry.corners(original)[(handle + 2) % 4], p)
         } else if let original {
@@ -156,6 +162,7 @@ final class ScreenshotSelectionView: NSView {
             selection = original.offsetBy(dx: dx, dy: dy)
         } else { selection = ScreenshotGeometry.rect(start, p) }
         toolbar?.isHidden = true
+        targetToolbar?.isHidden = true
         updateLayout(); needsDisplay = true
     }
     override func mouseUp(with event: NSEvent) {
@@ -172,6 +179,7 @@ final class ScreenshotSelectionView: NSView {
             selection = original; updateLayout(); needsDisplay = true; return
         }
         didSelect?()
+        if targetToolbarFactory != nil { installTargetToolbar(); return }
         if document == nil { installDocument(source: display.image) }
         toolbar?.isHidden = false; updateLayout()
         needsDisplay = true
@@ -179,6 +187,7 @@ final class ScreenshotSelectionView: NSView {
 
     private func chooseWindow(_ target: ScreenshotWindow) {
         didSelect?()
+        if targetToolbarFactory != nil { selectedWindow = target; installTargetToolbar(); return }
         guard let captureWindow else { installDocument(source: display.image); return }
         generation += 1
         let expected = generation, display = display
@@ -245,6 +254,7 @@ final class ScreenshotSelectionView: NSView {
         canvas?.frame = CGRect(x: -rect.minX, y: -rect.minY, width: bounds.width, height: bounds.height)
         border?.frame = rect.insetBy(dx: -7, dy: -7); border?.needsDisplay = true
         var toolbarSize = ScreenshotToolbarView.size
+        if let targetToolbar { toolbarSize = targetToolbar.fittingSize }
         if document?.error != nil { toolbarSize.height = max(toolbarSize.height, toolbar?.fittingSize.height ?? 80) }
         let x = min(max(rect.maxX - toolbarSize.width, 10), max(10, bounds.width - toolbarSize.width - 10))
         let y: CGFloat
@@ -252,6 +262,7 @@ final class ScreenshotSelectionView: NSView {
         else if rect.minY >= toolbarSize.height + 14 { y = rect.minY - toolbarSize.height - 10 }
         else { y = min(max(rect.maxY - toolbarSize.height - 12, 10), bounds.height - toolbarSize.height - 10) }
         toolbar?.frame = CGRect(origin: CGPoint(x: x, y: y), size: toolbarSize)
+        targetToolbar?.frame = CGRect(origin: CGPoint(x: x, y: y), size: toolbarSize)
         if let toolOptions, let document {
             toolOptions.isHidden = !toolbarState.showsOptions || document.adjustingCrop
                 || (document.tool == .select && document.selected == nil) || toolbar?.isHidden == true
@@ -356,7 +367,9 @@ final class ScreenshotSelectionView: NSView {
     }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { dismissOptionsOrFinish() }
-        else if event.keyCode == 36 || event.keyCode == 76 { export(save: false) }
+        else if event.keyCode == 36 || event.keyCode == 76 {
+            if targetToolbarFactory != nil { confirmTarget() } else { export(save: false) }
+        }
         else if handleCommand(event) { return }
         else if let document, let tool = ScreenshotTool.allCases.first(where: { $0.key == event.charactersIgnoringModifiers?.lowercased() }) {
             document.chooseTool(tool); window?.makeFirstResponder(canvas)
@@ -366,6 +379,23 @@ final class ScreenshotSelectionView: NSView {
     private func dismissOptionsOrFinish() {
         if toolbarState.showsOptions { toolbarState.showsOptions = false }
         else { finish?() }
+    }
+
+    private func installTargetToolbar() {
+        if targetToolbar == nil, let factory = targetToolbarFactory {
+            let toolbar = factory { [weak self] in self?.confirmTarget() }
+            addSubview(toolbar); targetToolbar = toolbar
+            let border = ScreenshotSelectionBorder(); addSubview(border, positioned: .below, relativeTo: toolbar); self.border = border
+        }
+        targetToolbar?.isHidden = false; updateLayout(); needsDisplay = true
+    }
+
+    private func confirmTarget() {
+        guard let rect = selection, rect.width >= 2, rect.height >= 2 else { return }
+        let pixels = ScreenshotGeometry.pixelRect(rect, displaySize: bounds.size, imageSize: display.size)
+        selectedTarget?(ScreenCaptureTarget(kind: selectedWindow != nil ? .window : (mode == .display && rect == bounds ? .display : .region),
+            displayID: display.id, windowID: selectedWindow?.id, rect: rect, pixelSize: pixels.size,
+            title: selectedWindow?.title ?? (mode == .display ? "Весь экран" : "Область экрана")))
     }
 }
 

@@ -28,6 +28,13 @@ final class ScreenshotFeature {
         KeyboardShortcuts.onKeyUp(for: .screenshotRegion) { [weak self] in self?.region() }
         KeyboardShortcuts.onKeyUp(for: .screenshotDisplay) { [weak self] in self?.display() }
     }
-    func region() { controller.start(.region) }
-    func display() { controller.start(.display) }
+    func cancel() { controller.cancelCapture() }
+    func region() {
+        guard !VideoRecordingFeature.shared.controller.isBusy else { return }
+        controller.start(.region)
+    }
+    func display() {
+        guard !VideoRecordingFeature.shared.controller.isBusy else { return }
+        controller.start(.display)
+    }
 }

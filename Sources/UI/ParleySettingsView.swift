@@ -4,12 +4,13 @@ import KeyboardShortcuts
 import ServiceManagement
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general, hotkeys, screenshots, stt, llm, integrations, audio, priv
+    case general, hotkeys, screenshots, video, stt, llm, integrations, audio, priv
     var id: String { rawValue }
     var title: String {
         switch self {
         case .general: return L("Общие", "General")
         case .hotkeys: return L("Горячие клавиши", "Shortcuts")
+        case .video: return L("Видео", "Video")
         case .screenshots: return L("Скриншоты", "Screenshots")
         case .stt:     return L("Речь", "Speech")
         case .llm:     return L("AI-модель", "AI model")
@@ -95,6 +96,7 @@ struct ParleySettingsView: View {
         case .general: generalTab
         case .hotkeys: hotkeysTab
         case .screenshots: screenshotsTab
+        case .video: videoTab
         case .stt:     sttTab
         case .llm:     llmTab
         case .integrations: integrationsTab
@@ -225,6 +227,34 @@ struct ParleySettingsView: View {
                 PRow(L("Сделать скриншот", "Take screenshot")) {
                     Button(L("Выделить область", "Select region")) { ScreenshotFeature.shared.region() }
                         .buttonStyle(PBorderedButtonStyle())
+                }
+            }
+        }
+    }
+
+    private var videoTab: some View {
+        VStack(alignment: .leading, spacing: PSpace.l) {
+            head(L("Видео", "Video"), L("Выбери окно, область или экран. Микрофон и звук компьютера включаются независимо перед записью.", "Select a window, region or display. Choose microphone and computer audio before recording."))
+            group(L("Горячие клавиши", "Shortcuts")) {
+                PRow(L("Записать область или окно", "Record region or window")) { KeyboardShortcuts.Recorder(for: .videoRegion) }
+                PDivider()
+                PRow(L("Остановить и сохранить", "Stop and save")) { KeyboardShortcuts.Recorder(for: .videoStop) }
+                PDivider()
+                PRow(L("Пауза / продолжить", "Pause / resume")) { KeyboardShortcuts.Recorder(for: .videoPause) }
+            }
+            group(L("Сохранение", "Saving"), footnote: L("Видео автоматически сохраняется в MP4. Закрытие карточки результата не удаляет файл.", "Videos are saved automatically as MP4. Closing the result card keeps the file.")) {
+                PRow(L("Папка по умолчанию", "Default folder")) {
+                    Button(L("Загрузки", "Downloads")) { NSWorkspace.shared.open(VideoRecordingFeature.shared.controller.savedDirectory) }.buttonStyle(PBorderedButtonStyle())
+                }
+                PDivider()
+                PRow(L("Незавершённые записи", "Unfinished recordings")) {
+                    Button(L("Восстановить", "Recover")) { VideoRecordingFeature.shared.controller.recover() }.buttonStyle(PBorderedButtonStyle())
+                }
+            }
+            group {
+                PRow(L("Начать запись", "Start recording")) {
+                    Button(L("Область или окно", "Region or window")) { VideoRecordingFeature.shared.region() }.buttonStyle(PBorderedButtonStyle())
+                    Button(L("Весь экран", "Full display")) { VideoRecordingFeature.shared.display() }.buttonStyle(PBorderedButtonStyle())
                 }
             }
         }
