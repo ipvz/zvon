@@ -103,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        CodexUsageStore.shared.stop()
         let video = VideoRecordingFeature.shared.controller
         let store = TranscriptStore.shared
         guard video.isBusy || store.hasActiveCaptureWork || TextInserter.hasPendingInsertion else { return .terminateNow }

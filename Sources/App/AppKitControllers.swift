@@ -2,12 +2,12 @@ import AppKit
 import SwiftUI
 import Combine
 
-// MARK: - Menu bar (ONE grouped status item: Parley mark │ divider │ tasks — routed by click x)
+// MARK: - Menu bar (ZVON │ tasks │ optional Codex allowance, routed by click x)
 
 /// A single status item drawn as one grouped strip (per mockup): the Parley mark (+ recording
-/// timer/dot) on the left, a hairline divider, then the tasks glyph + open-count badge on the right.
+/// timer/dot) on the left, the tasks glyph + open-count badge, and optional Codex allowance.
 /// Two separate NSStatusItems can't be kept adjacent (the system spaces them and other apps' items
-/// interleave), so both live in one button and the click is routed by x-position to the right popover.
+/// interleave), so they live in one button and clicks route to the corresponding popover.
 @MainActor
 final class MenuBarController: NSObject, NSPopoverDelegate {
     private let store: TranscriptStore
@@ -15,6 +15,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
     private let statusItem: NSStatusItem
     private let mainPopover = NSPopover()
     private let tasksPopover = NSPopover()
+    private let codexPopover = NSPopover()
+    private let codexUsage = CodexUsageStore.shared
+    private var codexBoundary: CGFloat?
     private var timer: Timer?
     private var cancellable: AnyCancellable?
     private var dividerX: CGFloat = 0   // button-space boundary: click left → main, right → tasks
@@ -30,7 +33,9 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             button.action = #selector(handleClick(_:))
             button.target = self
         }
-        for p in [mainPopover, tasksPopover] { p.behavior = .transient; p.delegate = self }
+        for p in [mainPopover, tasksPopover, codexPopover] { p.behavior = .transient; p.delegate = self }
+        codexPopover.contentViewController = NSHostingController(rootView: CodexUsagePopover(store: codexUsage))
+        codexUsage.start()
         mainPopover.contentViewController = NSHostingController(
             rootView: MenuBarPopover(store: store, closePopover: { [weak self] in self?.mainPopover.performClose(nil) }))
         tasksPopover.contentViewController = NSHostingController(
@@ -42,7 +47,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
             store.$isRecording.map { _ in () }.eraseToAnyPublisher(),
             store.$isPaused.map { _ in () }.eraseToAnyPublisher(),
             store.$showMenuBar.map { _ in () }.eraseToAnyPublisher(),
-            tasks.$tasks.map { _ in () }.eraseToAnyPublisher()
+            tasks.$tasks.map { _ in () }.eraseToAnyPublisher(),
+            codexUsage.objectWillChange.map { _ in () }.eraseToAnyPublisher()
         )
         .sink { [weak self] in Task { @MainActor in self?.updateButton() } }
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -53,17 +59,20 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
 
     @objc private func handleClick(_ sender: Any?) {
         guard let button = statusItem.button else { return }
-        let x = button.convert(NSApp.currentEvent?.locationInWindow ?? .zero, from: nil).x
-        let wantTasks = x >= dividerX
-        let show = wantTasks ? tasksPopover : mainPopover
-        let other = wantTasks ? mainPopover : tasksPopover
-        if other.isShown { other.performClose(sender) }
+        // NSStatusBarButton adds horizontal padding around the centered image.
+        let imageInset = max(0, (button.bounds.width - (button.image?.size.width ?? button.bounds.width)) / 2)
+        let x = button.convert(NSApp.currentEvent?.locationInWindow ?? .zero, from: nil).x - imageInset
+        let wantCodex = codexBoundary.map { x >= $0 } ?? false
+        let show = wantCodex ? codexPopover : (x >= dividerX ? tasksPopover : mainPopover)
+        for other in [mainPopover, tasksPopover, codexPopover] where other !== show && other.isShown { other.performClose(sender) }
         if show.isShown { show.performClose(sender) }
         else {
-            NSApp.activate(ignoringOtherApps: true)
+            if !wantCodex { NSApp.activate(ignoringOtherApps: true) }
             // Both popovers drop from the SAME point — the divider — so the pop origin is stable no
             // matter which half was clicked (and doesn't wander as the timer/badge width changes).
-            let anchor = NSRect(x: dividerX - 5, y: 0, width: 10, height: button.bounds.height)
+            if wantCodex { codexUsage.refresh() }
+            let anchorX = imageInset + (wantCodex ? ((codexBoundary ?? dividerX) + (button.image?.size.width ?? button.bounds.width)) / 2 : dividerX)
+            let anchor = NSRect(x: anchorX - 5, y: 0, width: 10, height: button.bounds.height)
             show.show(relativeTo: anchor, of: button, preferredEdge: .minY)
         }
     }
@@ -79,7 +88,14 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         }()
         let built = Self.composite(dark: dark, recording: store.isRecording, paused: store.isPaused,
                                    timer: timerText, count: tasks.open.count)
-        button.image = built.image
+        if codexUsage.enabled {
+            let usage = CodexUsageGlyph.append(to: built.image, remaining: codexUsage.remaining(), dark: dark)
+            button.image = usage.image; codexBoundary = usage.boundary
+            button.toolTip = codexUsage.tooltip
+        } else {
+            button.image = built.image; codexBoundary = nil; button.toolTip = "ZVON"
+            if codexPopover.isShown { codexPopover.performClose(nil) }
+        }
         dividerX = built.dividerX
     }
 

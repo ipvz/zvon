@@ -27,6 +27,7 @@ struct ParleySettingsView: View {
     @ObservedObject private var loc = L11n.shared
     @ObservedObject private var taskStore = TaskStore.shared
     @ObservedObject private var permissions = PermissionsManager.shared
+    @ObservedObject private var codexUsage = CodexUsageStore.shared
     @State private var tab: SettingsTab = .general
     var onClose: (() -> Void)? = nil
 
@@ -421,8 +422,12 @@ struct ParleySettingsView: View {
     private var integrationsTab: some View {
         VStack(alignment: .leading, spacing: PSpace.l) {
             head(L("Интеграции", "Integrations"),
-                 L("Доставка тезисов и протоколов наружу. Уходит только текст, каждый канал — по вашему действию.",
-                   "Deliver theses and minutes. Only text goes out, per your action."))
+                 L("Подключённые приложения и доставка итогов встреч.",
+                   "Connected apps and meeting summary delivery."))
+            group("Codex", footnote: L("Остаток лимитов в строке меню. Используется текущий вход в Codex; обновление каждые пять минут.",
+                                       "Remaining allowance in the menu bar. Uses your current Codex sign-in; refreshes every five minutes.")) {
+                PRow(L("Показывать лимиты Codex", "Show Codex usage")) { ParleyToggle(on: $codexUsage.enabled) }
+            }
             group(L("Telegram", "Telegram"),
                   footnote: L("Создайте бота у @BotFather, вставьте токен. Chat ID — узнать у @userinfobot (личный) или использовать ID канала, где бот — админ. Токен хранится в Keychain. Сообщения бота проходят через облако Telegram (не E2E).",
                               "Create a bot with @BotFather and paste the token. Get the chat ID from @userinfobot (personal), or a channel ID where the bot is an admin. The token is stored in the Keychain. Bot messages go through Telegram's cloud (not E2E).")) {
