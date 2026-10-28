@@ -280,12 +280,12 @@ final class TranscriptStore: ObservableObject {
         lines = out
     }
 
-    typealias LLMConfig = (endpoint: String, model: String, key: String?, style: LLMAPIStyle)
+    typealias LLMConfig = (endpoint: String, model: String, key: String?, style: LLMAPIStyle, headers: [LLMHTTPHeader])
 
     private func llmConfig() -> LLMConfig {
         let p = llmProvider
         let key = p.needsKey ? Keychain.get(account: p.keyAccount) : nil
-        return (providerEndpoint(p), providerModel(p), key, p.apiStyle)
+        return (providerEndpoint(p), providerModel(p), key, p.apiStyle, LLMHTTPHeaders.load(provider: p, endpoint: providerEndpoint(p)))
     }
 
     /// Endpoint for a provider: fixed cloud URL, or the user's field for hf/custom.
@@ -436,7 +436,7 @@ final class TranscriptStore: ObservableObject {
         let context = finals.suffix(6).map { "\($0.speaker.title): \($0.text)" }.joined(separator: "\n")
         Task { [weak self] in
             guard let fixed = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                       style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                                       style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                 .repairTranscript(text, context: context) else { return }
             guard let self else { return }
             let clean = GlossaryStore.shared.correct(fixed)
@@ -471,7 +471,7 @@ final class TranscriptStore: ObservableObject {
         guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { return }
         Task {
             guard let item = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                      style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                                      style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                 .parseTask(command: command, context: command) else { return }
             TaskStore.shared.edit(id) { t in
                 if let o = item.ownerClean, !o.isEmpty { t.owner = o }
@@ -522,7 +522,7 @@ final class TranscriptStore: ObservableObject {
         notesGenerating = true
         defer { notesGenerating = false }
         do {
-            let result = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+            let result = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers,
                                                  glossary: GlossaryStore.shared.promptFragment)
                 .generate(transcript: transcript)
             if !result.isEmpty { notes = result }   // tasks come only from spoken triggers, not ambient extraction
@@ -557,7 +557,7 @@ final class TranscriptStore: ObservableObject {
         askTask?.cancel()
         askTask = Task { [weak self] in
             do {
-                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers,
                                                      glossary: GlossaryStore.shared.promptFragment)
                     .ask(question: q, transcript: transcript)
                 guard !Task.isCancelled, let self else { return }
@@ -583,7 +583,7 @@ final class TranscriptStore: ObservableObject {
     func runRecipe(instruction: String, material: String) async throws -> String {
         let cfg = llmConfig()
         guard !cfg.endpoint.trimmingCharacters(in: .whitespaces).isEmpty else { throw LLMError.badURL }
-        return try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+        return try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers,
                                        glossary: GlossaryStore.shared.promptFragment)
             .runRecipe(instruction: instruction, material: material)
     }
@@ -631,7 +631,7 @@ final class TranscriptStore: ObservableObject {
         Task { [weak self] in
             do {
                 let out = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                  style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                                  style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                     .runRecipe(instruction: instruction, material: material)
                 guard let self else { return }
                 SpaceStore.shared.setSummary(id, out)
@@ -682,7 +682,7 @@ final class TranscriptStore: ObservableObject {
         spaceAskTasks[spaceId] = Task { [weak self] in
             do {
                 let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                     style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                                     style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                     .askArchive(question: q, context: context)
                 guard !Task.isCancelled, let self else { return }
                 self.spaceAsks[spaceId]?.answer = answer.isEmpty ? "Пустой ответ модели." : answer
@@ -725,7 +725,7 @@ final class TranscriptStore: ObservableObject {
         askTask?.cancel()
         askTask = Task { [weak self] in
             do {
-                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers,
                                                      glossary: GlossaryStore.shared.promptFragment)
                     .askArchive(question: q, context: context)
                 guard !Task.isCancelled, let self else { return }
@@ -813,7 +813,7 @@ final class TranscriptStore: ObservableObject {
         askTask?.cancel()
         askTask = Task { [weak self] in
             do {
-                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style,
+                let answer = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers,
                                                      glossary: GlossaryStore.shared.promptFragment)
                     .ask(question: q, transcript: material)
                 guard !Task.isCancelled, let self else { return }
@@ -840,7 +840,7 @@ final class TranscriptStore: ObservableObject {
         let cfg = llmConfig()
         Task { [weak self] in
             do {
-                try await LLMClient(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style).ping()
+                try await LLMClient(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers).ping()
                 self?.llmTest = "ok"
             } catch {
                 self?.llmTest = (error as? LLMError)?.errorDescription ?? error.localizedDescription
@@ -1076,7 +1076,7 @@ final class TranscriptStore: ObservableObject {
         let cfg = llmConfig()
         Task { [weak self] in
             let out = try? await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                               style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                               style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                 .enrich(userNotes: notesText, transcript: transcript)
             guard let self else { return }
             if let out { SessionStore.shared.updateUserNotes(id, out) }
@@ -1098,7 +1098,7 @@ final class TranscriptStore: ObservableObject {
         Task { [weak self] in
             do {
                 let out = try await NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key,
-                                                  style: cfg.style, glossary: GlossaryStore.shared.promptFragment)
+                                                  style: cfg.style, additionalHeaders: cfg.headers, glossary: GlossaryStore.shared.promptFragment)
                     .enrich(userNotes: notesText, transcript: transcript)
                 guard let self else { return }
                 self.userNotes = out
@@ -1389,7 +1389,7 @@ final class TranscriptStore: ObservableObject {
 
     private nonisolated static func polishWithTimeout(_ text: String, cfg: LLMConfig,
                                                       hint: String, glossary: String?) async -> PolishResult {
-        let gen = NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, glossary: glossary)
+        let gen = NoteGenerator(endpoint: cfg.endpoint, model: cfg.model, apiKey: cfg.key, style: cfg.style, additionalHeaders: cfg.headers, glossary: glossary)
         do {
             let polished = try await withTimeout(6, timeoutError: LLMError.network(
                 "ИИ не ответил за 6 секунд. Вставлен исходный текст."

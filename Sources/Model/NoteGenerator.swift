@@ -29,8 +29,8 @@ actor NoteGenerator {
     private let client: LLMClient
     private let glossary: String?
 
-    init(endpoint: String, model: String, apiKey: String?, style: LLMAPIStyle = .openai, glossary: String? = nil) {
-        client = LLMClient(endpoint: endpoint, model: model, apiKey: apiKey, style: style)
+    init(endpoint: String, model: String, apiKey: String?, style: LLMAPIStyle = .openai, additionalHeaders: [LLMHTTPHeader] = [], glossary: String? = nil) {
+        client = LLMClient(endpoint: endpoint, model: model, apiKey: apiKey, style: style, additionalHeaders: additionalHeaders)
         self.glossary = glossary
     }
 

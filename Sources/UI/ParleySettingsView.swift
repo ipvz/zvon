@@ -358,6 +358,9 @@ struct ParleySettingsView: View {
             .onAppear { reloadProviderFields() }
             .onChange(of: store.llmProvider) { _, _ in reloadProviderFields() }
 
+            LLMHeadersEditor(provider: p, endpoint: store.providerEndpoint(p)) { store.llmTest = "" }
+                .id(LLMHTTPHeaders.account(provider: p, endpoint: store.providerEndpoint(p)))
+
             group(L("Задачи", "Tasks"), footnote: L("Извлечение задач срабатывает на голосовые команды («создай задачу…», «напомни…») — не на всю расшифровку.", "Task extraction triggers on voice commands (“create a task…”, “remind me…”) — not on the whole transcript.")) {
                 PRow(L("Саммари и Итог", "Summaries & recap")) { ParleyToggle(on: $store.summariesEnabled) }
                 PDivider()

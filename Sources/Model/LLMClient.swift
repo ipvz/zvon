@@ -2,6 +2,7 @@ import Foundation
 
 /// A human-readable failure from the LLM endpoint — surfaced in the UI, never swallowed.
 enum LLMError: LocalizedError, Sendable {
+    case invalidHeaders(String)
     case badURL
     case http(Int, String?)
     case network(String)
@@ -9,6 +10,7 @@ enum LLMError: LocalizedError, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .invalidHeaders(let message): return "HTTP-заголовки: " + message
         case .badURL:
             return "Неверный адрес эндпоинта. Проверьте поле «Эндпоинт» в настройках."
         case .http(let code, let body):
@@ -39,15 +41,18 @@ actor LLMClient {
     private let model: String
     private let apiKey: String?
     private let style: LLMAPIStyle
+    private let additionalHeaders: [LLMHTTPHeader]
+    private let redirectPolicy = LLMRedirectPolicy()
     private let session: URLSession
 
     init(endpoint: String, model: String, apiKey: String?, style: LLMAPIStyle = .openai,
-         session: URLSession = .shared) {
+         additionalHeaders: [LLMHTTPHeader] = [], session: URLSession = .shared) {
         self.endpoint = endpoint
         self.model = model
         self.apiKey = apiKey
         self.style = style
         self.session = session
+        self.additionalHeaders = additionalHeaders
     }
 
     private func url(_ path: String) -> URL? {
@@ -135,12 +140,14 @@ actor LLMClient {
     /// Retry transient failures (network error, timeout, 5xx) up to 3 attempts with backoff. 4xx and
     /// success return immediately (no point retrying a bad request / auth error).
     private func send(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        var req = req
+        for header in try LLMHTTPHeaders.validated(additionalHeaders) { req.setValue(header.value, forHTTPHeaderField: header.name) }
         var lastError: Error = LLMError.emptyResponse
         for attempt in 0..<3 {
             try Task.checkCancellation()
             if attempt > 0 { try await Task.sleep(nanoseconds: UInt64(attempt) * 400_000_000) }
             do {
-                let (data, resp) = try await session.data(for: req)
+                let (data, resp) = try await session.data(for: req, delegate: additionalHeaders.isEmpty ? nil : redirectPolicy)
                 guard let http = resp as? HTTPURLResponse else { throw LLMError.emptyResponse }
                 if (500...599).contains(http.statusCode), attempt < 2 {
                     lastError = LLMError.http(http.statusCode, String(data: data, encoding: .utf8)); continue
