@@ -1,7 +1,35 @@
 import AVFoundation
 import CoreAudio
 import Foundation
-import WhisperKit
+
+/// Test seam for the hardware lifecycle; conversion and buffering remain in MicAudioSource.
+protocol MicrophoneEngine: AnyObject, Sendable {
+    var inputFormat: AVAudioFormat { get }
+    func installTap(format: AVAudioFormat, _ receive: @escaping (AVAudioPCMBuffer) -> Void)
+    func prepare()
+    func start() throws
+    func stop()
+    func removeTap()
+}
+
+final class NativeMicrophoneEngine: MicrophoneEngine, @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private var tappedInput: AVAudioInputNode?
+    var inputFormat: AVAudioFormat { engine.inputNode.inputFormat(forBus: 0) }
+    func installTap(format: AVAudioFormat, _ receive: @escaping (AVAudioPCMBuffer) -> Void) {
+        let input = engine.inputNode
+        tappedInput = input
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in receive(buffer) }
+    }
+    func prepare() { engine.prepare() }
+    func start() throws { try engine.start() }
+    func stop() { engine.stop() }
+    func removeTap() {
+        // Retain the installed node: don't ask the engine to resolve input hardware during teardown.
+        let input = tappedInput; tappedInput = nil
+        input?.removeTap(onBus: 0)
+    }
+}
 
 /// The audio input seam. Everything `StreamingTranscriber` needs from a capture source,
 /// so the exact same transcription loop can be driven by the live microphone in the app OR
@@ -38,13 +66,19 @@ protocol LiveAudioSource: AnyObject, Sendable {
 /// `audioSamples` array while its audio thread appended to it: there is one writer here, the tap,
 /// and readers take the lock.
 final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private let engine: any MicrophoneEngine
+    private let inputAvailable: () -> Bool
+    private let lifecycleLock = NSRecursiveLock()
+    private let callbackLock = NSLock()
+    private var acceptingSamples = false
+    private var callbackGeneration: UInt64 = 0
     private var converter: AVAudioConverter?
     private var monoFormat: AVAudioFormat?
     private let lock = NSLock()
     private var buffer: [Float] = []
     private var energy: [Float] = []            // last ≤16 relative-energy frames for the level meter
     private var tapped = false
+    private var needsTeardown = false
     /// Multi-channel input only: which capsule actually carries the voice, and the energy tally
     /// that decides it.
     private var chosenChannel: Int?
@@ -59,12 +93,27 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     /// the transcriber decides to keep.
     var onSamples: (@Sendable ([Float]) -> Void)?
 
-    init() {}
+    init(engine: any MicrophoneEngine = NativeMicrophoneEngine(), inputAvailable: (() -> Bool)? = nil) {
+        self.engine = engine
+        self.inputAvailable = inputAvailable ?? { Self.defaultInputDevice() != nil }
+    }
+    deinit {
+        guard needsTeardown else { return }
+        // A weak tap callback can temporarily own the last reference. Never stop HAL from its
+        // own callback thread. Retain just the driver until an independent queue finishes cleanup.
+        let engine = engine
+        DispatchQueue.global(qos: .userInitiated).async {
+            _ = zvonCatchNSException { engine.stop() }
+            _ = zvonCatchNSException { engine.removeTap() }
+        }
+    }
 
     /// Retried, because a start can also fail for a genuinely transient reason: ending a meeting
     /// destroys the aggregate device the system tap was built on, and while CoreAudio settles the
     /// default input can briefly report nothing usable. A device arriving or leaving does the same.
     func start() throws {
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        if tapped { return }
         var lastError: Error?
         for attempt in 1...3 {
             do {
@@ -118,15 +167,14 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
 
     private func startOnce() throws {
         // Do not touch the engine's input node with no device behind it — see defaultInputDevice().
-        guard Self.defaultInputDevice() != nil else {
+        guard inputAvailable() else {
             throw NSError(domain: "ZVON", code: -4, userInfo: [NSLocalizedDescriptionKey:
                 "Микрофон недоступен — нет устройства ввода."])
         }
         lock.lock(); buffer.removeAll(keepingCapacity: true); energy.removeAll(keepingCapacity: true); lock.unlock()
         chosenChannel = nil; channelEnergy = []; probedFrames = 0; buffersSeen = 0
 
-        let input = engine.inputNode
-        let inputFormat = input.inputFormat(forBus: 0)
+        let inputFormat = engine.inputFormat
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
             throw NSError(domain: "ZVON", code: -2, userInfo: [NSLocalizedDescriptionKey:
                 "Микрофон недоступен — система не сообщает формат входа."])
@@ -143,14 +191,20 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
         }
         self.converter = converter
         self.monoFormat = mono
+        callbackLock.lock()
+        callbackGeneration &+= 1
+        let generation = callbackGeneration
+        acceptingSamples = true
+        callbackLock.unlock()
         DebugLog.log("mic tap: \(Int(inputFormat.sampleRate)) Hz, \(inputFormat.channelCount) ch → 16000 Hz mono")
 
         // installTapOnBus raises an ObjC NSException when a tap is still attached from a too-fast
         // restart or the device vanished mid-call. Swift `try` cannot catch that — it would abort
         // the process — so it is bridged to a Swift error.
+        needsTeardown = true
         let nsError = zvonCatchNSException {
-            input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buf, _ in
-                self?.ingest(buf)
+            self.engine.installTap(format: inputFormat) { [weak self] buf in
+                self?.ingest(buf, generation: generation)
             }
             self.tapped = true
             self.engine.prepare()
@@ -198,7 +252,9 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     }
 
     /// Convert one hardware buffer to 16 kHz mono and publish it. Runs on the audio thread.
-    private func ingest(_ buf: AVAudioPCMBuffer) {
+    private func ingest(_ buf: AVAudioPCMBuffer, generation: UInt64) {
+        callbackLock.lock(); defer { callbackLock.unlock() }
+        guard acceptingSamples, generation == callbackGeneration else { return }
         guard let converter, let monoFormat else { return }
         let folded = downmix(buf)
         guard !folded.isEmpty,
@@ -242,11 +298,17 @@ final class MicAudioSource: LiveAudioSource, @unchecked Sendable {
     }
 
     func stop() {
-        if tapped {
-            _ = zvonCatchNSException { self.engine.inputNode.removeTap(onBus: 0) }
-            tapped = false
-        }
-        if engine.isRunning { engine.stop() }
+        lifecycleLock.lock(); defer { lifecycleLock.unlock() }
+        guard needsTeardown else { return }
+        // Drain any conversion already in progress and reject late deliveries. Never hold this
+        // lock while calling Core Audio: stop() can wait for an audio callback to return.
+        callbackLock.lock(); acceptingSamples = false; callbackLock.unlock()
+        // The 2026-10-27 crash had HAL's IO thread calling a null function while engine.stop()
+        // waited on another thread. Keep the input tap alive until hardware I/O is stopped.
+        _ = zvonCatchNSException { self.engine.stop() }
+        _ = zvonCatchNSException { self.engine.removeTap() }
+        tapped = false; needsTeardown = false
+        callbackLock.lock(); defer { callbackLock.unlock() }
         converter = nil
         monoFormat = nil
     }

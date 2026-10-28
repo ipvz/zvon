@@ -18,7 +18,8 @@ enum DebugLog {
     private static let queue = DispatchQueue(label: "com.parley.debuglog")
     private static let formatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss.SSS"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS Z"
         return f
     }()
 
@@ -38,9 +39,9 @@ enum DebugLog {
     }
 
     static func log(_ message: String) {
-        let stamp = formatter.string(from: Date())
-        let line = "\(stamp) \(message)\n"
+        let time = Date()
         queue.async {
+            let line = "\(formatter.string(from: time)) \(message)\n"
             guard let data = line.data(using: .utf8) else { return }
             rotateIfNeeded(adding: data.count)
             if let handle = try? FileHandle(forWritingTo: url) {
